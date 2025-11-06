@@ -4,8 +4,6 @@
 
 Network Vector is a powerful, Python-based network scanning tool that performs comprehensive TCP port discovery without relying on external tools like nmap or masscan. It creates beautiful, interactive D3.js visualizations to map network topology and security posture.
 
-![Network Vector Screenshot](assets/Screenshot.png)
-
 ## 🎥 See Network Vector in Action
 
 [![Network Vector Demo](https://img.youtube.com/vi/JDTW9TA8Odg/maxresdefault.jpg)](https://youtu.be/JDTW9TA8Odg)
