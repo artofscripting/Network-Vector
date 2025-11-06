@@ -6,6 +6,12 @@ Network Vector is a powerful, Python-based network scanning tool that performs c
 
 ![Network Vector Screenshot](assets/Screenshot.png)
 
+## 🎥 See Network Vector in Action
+
+[![Network Vector Demo](https://img.youtube.com/vi/JDTW9TA8Odg/maxresdefault.jpg)](https://youtu.be/JDTW9TA8Odg)
+
+*Click the image above to watch Network Vector scanning and visualizing enterprise networks*
+
 ![Network Vector Banner](https://img.shields.io/badge/Network-Vector-blue?style=for-the-badge&logo=network&logoColor=white)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
