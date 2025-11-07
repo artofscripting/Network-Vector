@@ -15,6 +15,7 @@ import argparse
 import subprocess
 import platform
 import random
+import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 
@@ -510,13 +511,128 @@ class RawPortScanner:
             'host_details': self.host_details
         }
 
+def export_to_csv(scan_results, share_results, host_details, target, ports_scanned, args):
+    """
+    Export scan results to CSV file when --no-graph is used.
+    """
+    from datetime import datetime
+    
+    # Create timestamped filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_filename = f"network_scan_{timestamp}.csv"
+    
+    try:
+        # Import port descriptions for service names
+        from port_descriptions import PORT_DESCRIPTIONS
+        
+        with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            
+            # Write header
+            writer.writerow([
+                'Type', 'IP Address', 'Hostname', 'Port', 'Service', 
+                'SMB Share', 'OS Detection', 'Response Time'
+            ])
+            
+            # Helper function to escape fields
+            def clean_field(field):
+                if field is None:
+                    return ''
+                return str(field).replace('\n', ' ').replace('\r', ' ')
+            
+            # Process each host from scan_results
+            for host_key, ports in scan_results.items():
+                # Extract IP and hostname from the key
+                parts = host_key.split('-')
+                ip = parts[0]
+                hostname = '-'.join(parts[1:]) if len(parts) > 1 else 'Unknown'
+                
+                # Get host details
+                host_detail = host_details.get(host_key, {})
+                os_detection = host_detail.get('os_detection', {})
+                os_info = f"{os_detection.get('os', 'Unknown')} ({os_detection.get('confidence', 'Unknown')} confidence)" if os_detection.get('os') else 'Not Available'
+                avg_response_time = f"{(host_detail.get('avg_response_time', 0) * 1000):.3f}ms" if host_detail.get('avg_response_time') is not None else 'N/A'
+                
+                # Add rows for open ports
+                if ports:
+                    for port in ports:
+                        # Look up service name from port descriptions
+                        port_info = PORT_DESCRIPTIONS.get(port, {})
+                        service = port_info.get('description', f'Port {port}') if port_info else f'Port {port}'
+                        
+                        # Get individual port response time if available
+                        port_response_time = avg_response_time  # fallback to average
+                        if host_detail.get('open_ports'):
+                            port_data = next((p for p in host_detail['open_ports'] if p.get('port') == port), None)
+                            if port_data and port_data.get('response_time') is not None:
+                                port_response_time = f"{(port_data['response_time'] * 1000):.3f}ms"
+                        
+                        writer.writerow([
+                            'Port',
+                            clean_field(ip),
+                            clean_field(hostname),
+                            port,
+                            clean_field(service),
+                            '',  # Empty SMB share column for port rows
+                            clean_field(os_info),
+                            port_response_time
+                        ])
+                
+                # Add rows for SMB shares
+                shares = share_results.get(host_key, [])
+                if shares:
+                    for share in shares:
+                        writer.writerow([
+                            'Share',
+                            clean_field(ip),
+                            clean_field(hostname),
+                            '',  # Empty port column for share rows
+                            '',  # Empty service column for share rows
+                            clean_field(share),
+                            clean_field(os_info),
+                            avg_response_time
+                        ])
+                
+                # If host has no ports or shares, add a basic host entry
+                if not ports and not shares:
+                    writer.writerow([
+                        'Host',
+                        clean_field(ip),
+                        clean_field(hostname),
+                        '',
+                        '',
+                        '',
+                        clean_field(os_info),
+                        avg_response_time
+                    ])
+            
+            # Add scan metadata
+            writer.writerow([])  # Empty row
+            writer.writerow(['# Scan Metadata'])
+            writer.writerow([f'# Target: {target}'])
+            writer.writerow([f'# Scan Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
+            writer.writerow([f'# Total Hosts: {len(host_details)}'])
+            writer.writerow([f'# Ports Scanned: {ports_scanned}'])
+            writer.writerow([f'# Hostname Resolution: {"Enabled" if not args.no_resolve_hostnames else "Disabled"}'])
+            writer.writerow([f'# Share Enumeration: {"Enabled" if not args.no_enumerate_shares else "Disabled"}'])
+            writer.writerow([f'# Randomized Scanning: {"Enabled" if not args.no_randomize else "Disabled"}'])
+            writer.writerow([f'# Stealth Mode: {"Enabled" if args.scan_delay > 0 else "Disabled"}'])
+        
+        print(f"\n📊 CSV export completed: {csv_filename}")
+        print(f"📁 File contains detailed scan results and metadata")
+        return csv_filename
+        
+    except Exception as e:
+        print(f"\n❌ CSV export failed: {e}")
+        return None
+
 def main():
     parser = argparse.ArgumentParser(description='Network Vector - Advanced Network Topology Scanner')
     parser.add_argument('target', help='Target IP address or network (e.g., 192.168.1.1 or 192.168.1.0/24)')
     parser.add_argument('--timeout', type=float, default=0.5, help='Connection timeout in seconds (default: 0.5)')
     parser.add_argument('--threads', type=int, default=1000, help='Maximum number of threads (default: 1000)')
     parser.add_argument('--ports', nargs='+', type=int, help='Custom ports to scan (default: top 100)')
-    parser.add_argument('--no-graph', action='store_true', help='Skip graph visualization')
+    parser.add_argument('--no-graph', action='store_true', help='Skip graph visualization and export results to CSV')
     parser.add_argument('--no-resolve-hostnames', action='store_true', help='Disable hostname resolution (enabled by default)')
     parser.add_argument('--no-enumerate-shares', action='store_true', help='Disable SMB share enumeration (enabled by default)')
     parser.add_argument('--no-randomize', action='store_true', help='Disable randomized scanning order (randomization enabled by default)')
@@ -611,6 +727,12 @@ def main():
                 output_file = custom_graph.save_and_show(html_filename, scan_data)
                 print(f"Custom D3 graph saved to: {output_file}")
                 print("Interactive graph opened in browser!")
+            else:
+                # Export to CSV when graph generation is skipped
+                print("\nGraph generation skipped. Exporting results to CSV...")
+                csv_file = export_to_csv(scan_results, share_results, host_details, args.target, len(ports_to_scan), args)
+                if csv_file:
+                    print("💡 Use Excel, Google Sheets, or any CSV viewer to analyze the data")
             
         else:
             print("\nNo open ports found on any hosts.")

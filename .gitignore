@@ -66,3 +66,6 @@ showcase_*.py
 # Build artifacts
 nvector.exe
 *.exe
+*.spec
+build/
+dist/

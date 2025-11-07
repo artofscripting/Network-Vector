@@ -151,7 +151,7 @@ python src/nvector.py 192.168.1.0/24 --scan-delay 2.0 --threads 20 --timeout 1.5
 
 ### Output Options
 ```bash
-# Skip graph generation (console output only)
+# Skip graph generation and export to CSV instead
 python src/nvector.py 192.168.1.0/24 --no-graph
 
 # Disable specific features
@@ -166,7 +166,7 @@ python src/nvector.py 192.168.1.0/24 --no-resolve-hostnames --no-enumerate-share
 | `--timeout` | Connection timeout in seconds | 0.5 |
 | `--threads` | Maximum number of scanning threads | 1000 |
 | `--ports` | Custom ports to scan | 750 common ports |
-| `--no-graph` | Skip D3.js visualization generation | Enabled |
+| `--no-graph` | Skip D3.js visualization generation and export to CSV | Enabled |
 | `--no-resolve-hostnames` | Disable reverse DNS lookup | Enabled |
 | `--no-enumerate-shares` | Disable SMB share enumeration | Enabled |
 | `--no-randomize` | Disable randomized scanning order | Randomization enabled |
@@ -215,13 +215,13 @@ python src/nvector.py 192.168.1.0/24 --scan-delay 2.0 --threads 20 --timeout 1.5
 | **Low Profile** | Minimize concurrent connections | `--threads 10 --timeout 2.0` |
 | **Targeted Scanning** | Reduce noise with specific ports | `--ports 80 443 22` |
 
-## �📊 Output Format
+## � Output Format
 
-### Interactive HTML Visualization
+### Interactive HTML Visualization (Default)
 Network Vector generates a single, self-contained HTML file with:
 - **Force-directed network graph** with D3.js v7
 - **Professional network topology** representation with SVG icons
-- **Interactive port information** with security details for 130+ ports
+- **Interactive port information** with security details for 875+ ports
 - **Collapsible UI controls** - Hide/show panels with keyboard shortcuts (Alt+C, Alt+I, Alt+L)
 - **CSV data export** - Download complete scan data for spreadsheet analysis
 - **Embedded scan data** - complete analysis data built into the HTML file
@@ -229,6 +229,14 @@ Network Vector generates a single, self-contained HTML file with:
 - **Responsive design** for desktop and mobile viewing
 - **Timestamped filename** for historical tracking (e.g., `network_scan_20251106_141532.html`)
 - **No external dependencies** - works offline with all assets embedded
+
+### Automatic CSV Export (--no-graph)
+When using `--no-graph`, Network Vector automatically exports results to CSV:
+- **Automatic Generation** - CSV file created immediately after scan completion
+- **Comprehensive Data** - All scan results, host details, and metadata included
+- **Timestamped Files** - Format: `network_scan_YYYYMMDD_HHMMSS.csv`
+- **Ready for Analysis** - Compatible with Excel, Google Sheets, databases
+- **No Manual Export** - Eliminates need for manual CSV download from HTML
 
 ### Key Features:
 - **Drag-and-drop nodes** with sticky positioning
