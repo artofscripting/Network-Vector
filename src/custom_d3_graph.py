@@ -1701,16 +1701,6 @@ class CustomD3Force3DGraph:
                 }}
                 
                 info.innerHTML = infoHtml;
-            }})
-            .onNodeDoubleClick(node => {{
-                /* Focus on node */
-                const distance = 200;
-                const distRatio = 1 + distance/Math.hypot(node.x, node.y, node.z);
-                Graph.cameraPosition(
-                    {{ x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio }},
-                    node,
-                    1000
-                );
             }});
         
         function getPortDetails(port) {{

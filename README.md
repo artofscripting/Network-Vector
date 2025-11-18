@@ -202,7 +202,6 @@ python src/nvector.py 192.168.1.0/24,10.0.0.0/24 --3d
   - Left-click + drag to rotate the view
   - Right-click + drag to pan
   - Scroll to zoom in/out
-  - Double-click nodes to focus camera
   
 - **Visual Elements**
   - Floating text labels for hosts (white on black background)
@@ -222,7 +221,9 @@ python src/nvector.py 192.168.1.0/24,10.0.0.0/24 --3d
 - **Alt+I** - Toggle Info panel
 - **Alt+L** - Toggle Legend
 - **Click node** - Display node details
-- **Double-click node** - Focus camera on node
+- **Left-click + drag** - Rotate view
+- **Right-click + drag** - Pan view
+- **Scroll** - Zoom in/out
 
 ## 🕵️ Stealth Scanning & Evasion
 
