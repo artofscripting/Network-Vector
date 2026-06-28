@@ -1954,7 +1954,7 @@ class CustomD3Force3DGraph:
     <title>{title}</title>
     <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <script src="https://unpkg.com/three-spritetext@1.8.2/dist/three-spritetext.min.js"></script>
-    <script src="https://unpkg.com/3d-force-graph"></script>
+    <script src="https://unpkg.com/3d-force-graph@1.73.6/dist/3d-force-graph.min.js"></script>
     <style>
         body {{
             margin: 0;

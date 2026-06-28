@@ -17,15 +17,20 @@ Network Vector is a powerful, Python-based network scanning tool that performs c
 ## ✨ Features
 
 ### 🚀 Core Capabilities
+- **Ping Sweep Host Discovery** - ICMP ping sweep identifies live hosts before port scanning, dramatically reducing wasted connections on dead IPs
 - **Raw TCP Port Scanning** - Scans 750 unique ports without external dependencies
+- **Connection Semaphore** - Caps concurrent open sockets at 500 to prevent silent failures from OS file-descriptor exhaustion
 - **Multi-threaded Performance** - Up to 1000 concurrent threads for fast scanning
-- **Deep Scan (Dig)** - Automatically scan all 65535 ports on discovered hosts with `--dig`
-- **All Ports Mode** - Scan all 65535 ports on entire network with `--all-ports`
+- **Deep Scan (Dig)** - Scan all 65535 ports on every host that had at least one open port with `--dig`
+- **All Ports Mode** - Scan all 65535 ports on the entire network with `--all-ports`
+- **Skip Discovery (-Pn)** - Treat all addresses as live and skip the ping sweep (useful when ICMP is filtered)
+- **Live Log** - Print each port or host discovery to stdout in real-time with `--livelog`
 - **Progress Indicator** - Real-time percentage progress shown during scanning
 - **Live Mode** - Regenerate graphs in real-time as hosts are discovered with `--live`
 - **Randomized Scanning** - Randomizes IP and port scan order for balanced network load
 - **Configurable Delays** - Optional random delays between hosts for controlled scanning
 - **Host Exemptions** - Exclude specific IPs or CIDRs from scanning with `--exempt`
+- **Multi-CIDR Support** - Scan multiple networks in a single command with comma-separated targets
 - **Network Topology Discovery** - Automatic CIDR-based network hierarchy visualization
 - **Interactive D3.js Graphs** - Professional force-directed network visualizations
 - **SMB Share Enumeration** - Cross-platform Windows/Linux share discovery
@@ -67,332 +72,245 @@ Network Vector is a powerful, Python-based network scanning tool that performs c
 ## 🛠️ Installation
 
 ### Prerequisites
-- Python 3.8 or higher (for source code)
+- Python 3.8 or higher
 - Windows, Linux, or macOS
-- **OR use the pre-built executable (no Python required!)**
 
-### Option 1: Pre-built Executable (Recommended)
+### Option 1: Debian Package (Linux — Recommended)
 ```bash
-# Clone the repository
-git clone https://github.com/artofscripting/networkvector.git
-cd networkvector
+# Download the .deb from the Releases tab
+sudo dpkg -i networkvector_1.0.0_all.deb
 
-# Download the latest executable from Releases tab on GitHub
-# Or build it yourself using the instructions below
-
-# Run immediately with no setup required
-./nvector.exe 192.168.1.0/24
-
-# All features included: 1000 threads, embedded data, interactive visualization
+# Run from anywhere
+nvector 192.168.1.0/24
 ```
 
-**Note**: Pre-built executables are available in the [Releases section](https://github.com/artofscripting/networkvector/releases) of this repository.
+To uninstall:
+```bash
+sudo dpkg -r networkvector
+```
 
 ### Option 2: Python Source
-
-### Quick Start
 ```bash
 # Clone the repository
 git clone https://github.com/artofscripting/networkvector.git
 cd networkvector
 
-# Install dependencies (none required - uses only Python standard library!)
+# No dependencies required — uses only the Python standard library
+python3 src/nvector.py 192.168.1.0/24
+```
 
-# Run a basic scan (uses 1000 threads by default for maximum speed)
-python src/nvector.py 192.168.1.1
-
-# Scan entire network with full features
-python src/nvector.py 192.168.1.0/24 --resolve-hostnames --enumerate-shares
-
-# Use the pre-built executable (no Python required!)
+### Option 3: Pre-built Executable
+```bash
+# Download the latest executable from the Releases tab on GitHub
 ./nvector.exe 192.168.1.0/24
 ```
 
 ### Build Executable (Optional)
 ```bash
-# Install PyInstaller
 pip install pyinstaller
-
-# Navigate to source directory
 cd src
-
-# Build standalone executable with all dependencies
 pyinstaller --onefile --add-data "custom_d3_graph.py;." --hidden-import=webbrowser --name="nvector" nvector.py
-
-# Run the executable
-./dist/nvector.exe 192.168.1.0/24
+./dist/nvector 192.168.1.0/24
 ```
-
-**Pre-built Executable Available**: A ready-to-use `nvector.exe` is included in the repository for immediate use without Python installation.
 
 ## 📖 Usage Examples
 
-### Basic Network Scan
+### Basic Scans
 ```bash
-# Scan a single host (uses 1000 threads by default)
-python src/nvector.py 192.168.1.100
+# Scan a single host
+python3 src/nvector.py 192.168.1.100
 
-# Or use the pre-built executable
-./nvector.exe 192.168.1.100
+# Scan an entire subnet (ping sweep runs first to find live hosts)
+python3 src/nvector.py 192.168.1.0/24
 
-# Scan a network range
-python src/nvector.py 192.168.1.0/24
+# Skip ping sweep — treat all addresses as live (useful when ICMP is filtered)
+python3 src/nvector.py 192.168.1.0/24 -Pn
 ```
 
-### Advanced Scanning
+### Discovery & Logging
 ```bash
-# Full feature scan with hostname resolution and SMB enumeration (default 1000 threads)
-python src/nvector.py 192.168.1.0/24 --resolve-hostnames --enumerate-shares
+# Print each discovered port and host to the terminal as scanning runs
+python3 src/nvector.py 192.168.1.0/24 --livelog
 
-# Generate 3D visualization in addition to 2D graph
-python src/nvector.py 192.168.1.0/24 --3d
+# Combine with -Pn for environments where ping is blocked
+python3 src/nvector.py 192.168.1.0/24 -Pn --livelog
 
-# Scan multiple networks with 3D visualization
-python src/nvector.py 192.168.1.0/24,10.0.0.0/24 --3d --timeout 1.5
-
-# Deep scan - discover hosts then scan all 65535 ports on each
-python src/nvector.py 192.168.1.0/24 --dig
-
-# Scan all ports on entire network (slow but thorough)
-python src/nvector.py 192.168.1.0/24 --all-ports
-
-# Live mode - graphs update in real-time as hosts are found
-python src/nvector.py 192.168.1.0/24 --live --3d
-
-# Exempt specific hosts or subnets from scanning
-python src/nvector.py 192.168.1.0/24 --exempt 192.168.1.1,192.168.1.254
-
-# Exempt an entire subnet while scanning a larger range
-python src/nvector.py 10.0.0.0/16 --exempt 10.0.1.0/24,10.0.2.0/24
-
-# Reduce threads for controlled scanning
-python src/nvector.py 192.168.1.0/24 --threads 50
-
-# Add delays between hosts for gentler scanning
-python src/nvector.py 192.168.1.0/24 --scan-delay 1.0 --threads 50
-
-# Disable randomization for sequential scanning
-python src/nvector.py 192.168.1.0/24 --no-randomize
-
-# Custom port range
-python src/nvector.py 192.168.1.1 --ports 22 80 443 3389 5432
-
-# Custom timeout for slow networks
-python src/nvector.py 192.168.1.0/24 --timeout 2.0
-
-# Maximum performance with executable
-./nvector.exe 192.168.1.0/24 --threads 1000 --no-randomize
+# Pipe live discoveries to a log file
+python3 src/nvector.py 192.168.1.0/24 --livelog | tee scan.log
 ```
 
-### Output Options
+### Deep Scanning
 ```bash
-# Skip graph generation and export to CSV instead
-python src/nvector.py 192.168.1.0/24 --no-graph
+# Deep scan — after initial pass, scan all 65535 ports on any host with open ports
+python3 src/nvector.py 192.168.1.0/24 --dig
 
-# Disable specific features
-python src/nvector.py 192.168.1.0/24 --no-resolve-hostnames --no-enumerate-shares
+# Scan all 65535 ports on the entire subnet (slow but thorough)
+python3 src/nvector.py 192.168.1.0/24 --all-ports
+
+# Custom port list
+python3 src/nvector.py 192.168.1.0/24 --ports 22 80 443 3389 5432
+```
+
+### Visualization
+```bash
+# Generate both 2D and 3D visualizations
+python3 src/nvector.py 192.168.1.0/24 --3d
+
+# Live mode — graphs regenerate in real-time as hosts are found
+python3 src/nvector.py 192.168.1.0/24 --live --3d
+
+# Export to CSV only, no graph
+python3 src/nvector.py 192.168.1.0/24 --no-graph
+```
+
+### Multi-Network & Advanced
+```bash
+# Scan multiple networks in one run
+python3 src/nvector.py 192.168.1.0/24,10.0.0.0/24,172.16.0.0/24 --3d
+
+# Exclude sensitive hosts or subnets
+python3 src/nvector.py 192.168.1.0/24 --exempt 192.168.1.1,192.168.1.254
+python3 src/nvector.py 10.0.0.0/16 --exempt 10.0.1.0/24,10.0.2.0/24
+
+# Stealth scanning — randomize order and add delays
+python3 src/nvector.py 192.168.1.0/24 --scan-delay 1.0 --threads 50
+
+# Custom timeout for slow or high-latency networks
+python3 src/nvector.py 192.168.1.0/24 --timeout 5.0
+
+# Full-featured scan
+python3 src/nvector.py 192.168.1.0/24 --3d --livelog --dig --timeout 2.0
 ```
 
 ## 🎯 Command Line Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `target` | IP address or network (e.g., 192.168.1.1 or 192.168.1.0/24) | Required |
-| `--timeout` | Connection timeout in seconds | 3.0 |
-| `--threads` | Maximum number of scanning threads | 1000 |
-| `--ports` | Custom ports to scan | 750 common ports |
-| `--all-ports` | Scan all 65535 ports (slow) | Disabled |
-| `--dig` | Deep scan all 65535 ports on discovered hosts | Disabled |
-| `--live` | Live mode: regenerate graphs after each host found | Disabled |
-| `--exempt` | Comma-separated IPs or CIDRs to exclude from scanning | None |
-| `--no-graph` | Skip D3.js visualization generation and export to CSV | Enabled |
-| `--no-resolve-hostnames` | Disable reverse DNS lookup | Enabled |
-| `--no-enumerate-shares` | Disable SMB share enumeration | Enabled |
-| `--no-randomize` | Disable randomized scanning order | Randomization enabled |
-| `--scan-delay` | Max random delay between hosts (seconds) | 0.0 |
-| `--3d`, `--force-3d` | Generate additional 3D force-directed graph visualization | Disabled |
+| `target` | IP, CIDR, or comma-separated CIDRs to scan | Required |
+| `--timeout` | Connection timeout per port in seconds | `3.0` |
+| `--threads` | Maximum concurrent scanning threads | `1000` |
+| `--ports` | Custom port list to scan | Top 750 ports |
+| `--all-ports` | Scan all 65535 ports on every address | Off |
+| `--dig` | After initial pass, scan all 65535 ports on hosts with any open port | Off |
+| `-Pn` | Skip ping sweep — treat all addresses as live | Off |
+| `--livelog` | Print a line to stdout for each discovered port and host | Off |
+| `--live` | Regenerate graphs after each host is found (requires graphs) | Off |
+| `--3d`, `--force-3d` | Generate an additional 3D force-directed graph | Off |
+| `--no-graph` | Skip graph generation; export results to CSV instead | Off |
+| `--no-resolve-hostnames` | Disable reverse DNS lookup | Off |
+| `--no-enumerate-shares` | Disable SMB share enumeration | Off |
+| `--no-randomize` | Disable randomized scan order | Off |
+| `--scan-delay` | Max random delay between host scans (seconds) | `0.0` |
+| `--exempt` | Comma-separated IPs or CIDRs to exclude | None |
 
 ## 🎯 3D Visualization
 
-Network Vector now supports immersive 3D network topology visualization using the 3d-force-graph library.
+Network Vector supports immersive 3D network topology visualization using the 3d-force-graph library.
 
 ### Enable 3D Mode
 ```bash
-# Generate both 2D and 3D visualizations
-python src/nvector.py 192.168.1.0/24 --3d
-
-# Scan multiple networks with 3D output
-python src/nvector.py 192.168.1.0/24,10.0.0.0/24 --3d
+python3 src/nvector.py 192.168.1.0/24 --3d
+python3 src/nvector.py 192.168.1.0/24,10.0.0.0/24 --3d
 ```
 
-### 3D Features
-- **Interactive 3D Navigation**
-  - Left-click + drag to rotate the view
-  - Right-click + drag to pan
-  - Scroll to zoom in/out
-  
-- **Search & Highlighting**
-  - Search for hosts, IPs, or ports using the search box
-  - Light blue glow effect on matching nodes
-  - Previous/Next navigation through results
-  - Non-matching nodes dim for focus
-  
-- **Node Selection**
-  - Click any node to select and view details
-  - Selected node shows red, larger label
-  - Host synopsis shows connected ports and shares
-  
-- **Host Tour Animation**
-  - Play button starts animated tour through hosts
-  - Smooth cinematic camera movement
-  - Pause/Stop controls for tour
-  - Info panel updates with host synopsis during tour
-  
-- **Visual Elements**
-  - Floating text labels for hosts (white on black background)
-  - Floating text labels for shares (pink on dark red background)
-  - OS-based host node colors (same as 2D)
-  - Risk-based port node colors (red/blue)
-  - Yellow link connections
-  
-- **Output**
-  - Generates timestamped 3D HTML file (e.g., `network_scan_20251118_161541_3d.html`)
-  - Self-contained with all dependencies embedded
-  - Works offline with no external resources needed
-  - Same embedded scan data and CSV export features as 2D
-
 ### Controls (3D View)
-- **Alt+C** - Toggle Controls panel
-- **Alt+I** - Toggle Info panel
-- **Alt+L** - Toggle Legend
-- **Alt+S** - Focus search box
-- **Escape** - Clear search
-- **Click node** - Select and display node details with host synopsis
-- **Double-click node** - Center and zoom to node
-- **Left-click + drag** - Rotate view
-- **Right-click + drag** - Pan view
-- **Scroll** - Zoom in/out
-- **Play button** - Start host tour animation
-- **Pause button** - Pause host tour
-- **Stop button** - Stop host tour and reset
+- **Left-click + drag** — Rotate view
+- **Right-click + drag** — Pan view
+- **Scroll** — Zoom in/out
+- **Click node** — Select and display node details
+- **Double-click node** — Center and zoom to node
+- **Play button** — Start host tour animation
+- **Pause / Stop** — Control host tour
+- **Alt+C** — Toggle Controls panel
+- **Alt+I** — Toggle Info panel
+- **Alt+L** — Toggle Legend
+- **Alt+S** — Focus search box
+- **Escape** — Clear search
 
-## � Output Format
+## 📄 Output Format
 
-### Interactive HTML Visualization (Default)
-Network Vector generates self-contained HTML files with:
+### Interactive HTML (Default)
+Network Vector generates self-contained HTML files with all assets embedded — no internet connection required to view them.
 
-#### 2D Visualization (Always Generated)
-- **Force-directed network graph** with D3.js v7
-- **Professional network topology** representation with SVG icons
-- **Interactive port information** with security details for 130+ ports
-- **Collapsible UI controls** - Hide/show panels with keyboard shortcuts (Alt+C, Alt+I, Alt+L)
-- **CSV data export** - Download complete scan data for spreadsheet analysis
-- **Embedded scan data** - complete analysis data built into the HTML file
-- **Show Scan Data button** - view raw scan results without separate JSON files
-- **Responsive design** for desktop and mobile viewing
-- **Timestamped filename** for historical tracking (e.g., `network_scan_20251118_161541.html`)
-- **No external dependencies** - works offline with all assets embedded
+| File | Contents |
+|------|----------|
+| `network_scan_YYYYMMDD_HHMMSS.html` | 2D force-directed graph (always generated) |
+| `network_scan_YYYYMMDD_HHMMSS_3d.html` | 3D force-directed graph (`--3d` flag) |
 
-#### 3D Visualization (--3d flag)
-- **Immersive 3D force-directed graph** using 3d-force-graph library
-- **Interactive camera controls** - Rotate, pan, zoom, and focus
-- **Floating text labels** - Host and share names visible in 3D space
-- **Same data and features** as 2D view with spatial depth
-- **Separate timestamped file** (e.g., `network_scan_20251118_161541_3d.html`)
-- **Fully self-contained** - no external libraries or resources needed
+Both files include:
+- Complete embedded scan data with "Show Scan Data" button
+- In-browser CSV export button
+- Color-coded risk classification for ports
+- OS detection results per host
 
-### Automatic CSV Export (--no-graph)
-When using `--no-graph`, Network Vector automatically exports results to CSV:
-- **Automatic Generation** - CSV file created immediately after scan completion
-- **Comprehensive Data** - All scan results, host details, and metadata included
-- **Timestamped Files** - Format: `network_scan_YYYYMMDD_HHMMSS.csv`
-- **Ready for Analysis** - Compatible with Excel, Google Sheets, databases
-- **No Manual Export** - Eliminates need for manual CSV download from HTML
+### CSV Export (`--no-graph`)
+When graph generation is skipped, results are written to `network_scan_YYYYMMDD_HHMMSS.csv` with separate rows for ports, SMB shares, and scan metadata — compatible with Excel, Google Sheets, and databases.
 
-### Key Features:
-- **Drag-and-drop nodes** with sticky positioning
-- **Right-click collapse/expand** for network organization
-- **Double-click port details** with security assessments
-- **Color-coded risk levels** (red for dangerous, blue for safe ports)
-- **Network hierarchy visualization** with CIDR-based topology
-- **CSV data export** - Complete scan data export with:
-  - Separate rows for ports and SMB shares (no mixing)
-  - Host details (IP, hostname, response times)
-  - Port information (port number, service name) in dedicated rows
-  - SMB shares in their own dedicated rows
-  - OS detection results
-  - Scan metadata and configuration
-  - Timestamped filenames for historical analysis
+### Live Log (`--livelog`)
+Each discovery prints immediately to stdout:
+```
+[LIVELOG] PORT OPEN  192.168.1.5:22   (12ms)
+[LIVELOG] PORT OPEN  192.168.1.5:443  (8ms)
+[LIVELOG] HOST FOUND 192.168.1.5  2 open port(s): [22, 443]
+```
 
 ## 🔧 Technical Details
 
 ### Architecture
-- **Pure Python Implementation** - No external scanning tools required
-- **Socket-based Scanning** - Raw TCP connection attempts
-- **Multi-threaded Design** - Concurrent scanning for performance
-- **Modular Structure** - Separate scanning and visualization components
+- **Pure Python** — No external scanning tools required; standard library only
+- **Ping Sweep First** — ICMP ping discovers live hosts before port scanning to avoid wasting connections on dead IPs; falls back to scanning all addresses if ICMP is filtered
+- **Socket Semaphore** — A global semaphore caps concurrent open sockets at 500, preventing the OS file-descriptor limit from silently dropping scan results
+- **Multi-threaded Design** — Concurrent host and port scanning with coordinated thread pools
+- **Modular Structure** — Separate scanning (`nvector.py`), visualization (`custom_d3_graph.py`), and port database (`port_descriptions.py`) components
 
 ### Port Coverage
-Network Vector scans **998 unique ports** covering:
-- **System Services** (1-1024): SSH, HTTP, HTTPS, FTP, Telnet, etc.
+Network Vector scans **750 unique ports** covering:
+- **System Services** (1–1024): SSH, HTTP, HTTPS, FTP, Telnet, etc.
 - **Database Ports** (1433, 3306, 5432, etc.): SQL Server, MySQL, PostgreSQL
 - **Application Services** (8080, 9000, etc.): Web applications and APIs
-- **Development Ports** (3000-4000): Node.js, Rails, Django applications
+- **Development Ports** (3000–4000): Node.js, Rails, Django applications
 - **Enterprise Services** (389, 636, etc.): LDAP, Active Directory
 
 ### Visualization Technology
-- **D3.js v7** - Latest version for maximum compatibility
-- **Force-directed Layout** - Automatic node positioning with physics simulation
-- **SVG Rendering** - Scalable vector graphics for crisp visuals
-- **Base64 Embedding** - Self-contained HTML with no external dependencies
+- **D3.js v7** — Force-directed 2D graph
+- **3d-force-graph v1.73.6** — Three.js-based 3D graph
+- **SVG Rendering** — Scalable vector graphics for crisp visuals
+- **Base64 Embedding** — Self-contained HTML with no external dependencies at runtime
 
 ## 🛡️ Security Considerations
 
-### Ethical Use
-- **Educational Purpose** - Designed for learning network security concepts
-- **Authorized Testing Only** - Only scan networks you own or have permission to test
-- **Responsible Disclosure** - Report vulnerabilities through proper channels
+Network Vector performs TCP scanning which generates network traffic. Use responsibly:
 
-### Responsible Scanning
-Network Vector performs TCP scanning which generates network traffic. For responsible scanning:
-- Use `--exempt` to exclude sensitive hosts
-- Use appropriate thread counts for your network
-- Use `--scan-delay` to reduce scanning speed when needed
-- Always obtain proper authorization before scanning
+- Only scan networks you own or have explicit permission to test
+- Use `--exempt` to exclude sensitive or critical hosts
+- Use `--scan-delay` and lower `--threads` for gentler scanning
+- Use `-Pn` only when you know hosts are live — it skips discovery and port-scans every address
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our contributing guidelines:
-
-1. **Fork the repository**
-2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
-3. **Commit your changes** (`git commit -m 'Add amazing feature'`)
-4. **Push to the branch** (`git push origin feature/amazing-feature`)
-5. **Open a Pull Request**
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit your changes: `git commit -m 'Add amazing feature'`
+4. Push to the branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
 
 ### Development Setup
 ```bash
-# Clone your fork
 git clone https://github.com/yourusername/networkvector.git
 cd networkvector
-
-# Create development branch
 git checkout -b feature/your-feature
-
-# Make changes and test
-python src/nvector.py 127.0.0.1 --threads 10
+python3 src/nvector.py 127.0.0.1 --threads 10
 ```
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- **D3.js Community** - For the incredible visualization framework
-- **Python Community** - For the robust standard library that makes this possible
-- **Network Security Community** - For inspiration and best practices
-- **Open Source Contributors** - For making tools like this possible
+- **D3.js Community** — For the incredible visualization framework
+- **Python Community** — For the robust standard library that makes this possible
+- **Network Security Community** — For inspiration and best practices
 
 ## 📞 Support
 
@@ -402,6 +320,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Network Vector** - Mapping networks, visualizing security, empowering defenders.
+**Network Vector** — Mapping networks, visualizing security, empowering defenders.
 
 *Made with ❤️ by the ArtOfScripting community*

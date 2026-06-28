@@ -109,7 +109,7 @@ class SMBShareEnumerator:
         return []
 
 class RawPortScanner:
-    def __init__(self, timeout=1.0, max_threads=1000, resolve_hostnames=False, enumerate_shares=False, randomize_scan=True, scan_delay=0.0, exempt_list=None):
+    def __init__(self, timeout=1.0, max_threads=1000, resolve_hostnames=False, enumerate_shares=False, randomize_scan=True, scan_delay=0.0, exempt_list=None, livelog=False, no_ping_sweep=False):
         self.timeout = timeout
         self.max_threads = max_threads
         self.resolve_hostnames = resolve_hostnames
@@ -123,6 +123,12 @@ class RawPortScanner:
         self.share_results = defaultdict(list) if enumerate_shares else None
         self.smb_enumerator = SMBShareEnumerator() if enumerate_shares else None
         self.hostname_cache = {}
+        self.livelog = livelog
+        self.no_ping_sweep = no_ping_sweep
+        # Cap concurrent open sockets globally to avoid exhausting file descriptors.
+        # 50 host workers × 750 port threads would otherwise attempt ~37,500 simultaneous
+        # sockets; the OS default fd limit (~1024) silently kills most of them.
+        self._conn_semaphore = threading.Semaphore(500)
     
     def _parse_exemptions(self):
         """Parse exemption list into IP networks for efficient checking"""
@@ -173,14 +179,15 @@ class RawPortScanner:
     def scan_port(self, host, port):
         """Scan a single port on a host and return (is_open, response_time)"""
         try:
-            start_time = time.time()
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(self.timeout)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            result = sock.connect_ex((host, port))
-            response_time = time.time() - start_time
-            sock.close()
-            
+            with self._conn_semaphore:
+                start_time = time.time()
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self.timeout)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                result = sock.connect_ex((host, port))
+                response_time = time.time() - start_time
+                sock.close()
+
             if result == 0:
                 return True, response_time
             else:
@@ -231,7 +238,9 @@ class RawPortScanner:
                             'response_time': response_time
                         }
                         response_times.append(response_time)
-                        
+                        if self.livelog:
+                            print(f"[LIVELOG] PORT OPEN  {host_display}:{port}  ({response_time*1000:.0f}ms)")
+
                         # Check if this is a file service port
                         if port in [445, 139, 2049]:  # SMB and NFS ports
                             file_service_ports.append(port)
@@ -245,7 +254,9 @@ class RawPortScanner:
         
         if open_ports:
             self.scan_results[host_display] = sorted(open_ports)
-            
+            if self.livelog:
+                print(f"[LIVELOG] HOST FOUND {host_display}  {len(open_ports)} open port(s): {sorted(open_ports)}")
+
             # Calculate average response time for the host
             avg_response_time = sum(response_times) / len(response_times) if response_times else 0
             
@@ -475,9 +486,37 @@ class RawPortScanner:
             }
         }
     
+    def discover_live_hosts(self, hosts):
+        """Ping sweep to find which IPs are alive before port scanning.
+
+        Uses the system ping binary (works without root). Falls back to scanning
+        all addresses if ping finds nothing (ICMP may be firewalled).
+        """
+        live = []
+        lock = threading.Lock()
+
+        def ping(ip):
+            try:
+                if platform.system().lower() == 'windows':
+                    cmd = ['ping', '-n', '1', '-w', '500', ip]
+                else:
+                    cmd = ['ping', '-c', '1', '-W', '1', ip]
+                r = subprocess.run(cmd, capture_output=True, timeout=3)
+                if r.returncode == 0:
+                    with lock:
+                        live.append(ip)
+            except Exception:
+                pass
+
+        print(f"  Ping sweep: probing {len(hosts)} addresses...", flush=True)
+        with ThreadPoolExecutor(max_workers=min(200, len(hosts))) as executor:
+            list(executor.map(ping, hosts))
+
+        return live
+
     def scan_network(self, target, ports=None, on_host_complete=None):
         """Scan a network or single host
-        
+
         Args:
             target: IP address or CIDR network to scan
             ports: List of ports to scan
@@ -512,16 +551,26 @@ class RawPortScanner:
             exempt_count = original_count - len(hosts)
             if exempt_count > 0:
                 print(f"Exempted {exempt_count} host(s) from scan based on exclusion rules")
-        
+
+        # Ping sweep: only port-scan addresses that respond, so we don't burn the
+        # connection semaphore on the hundreds of dead IPs in a typical /24.
+        # Skipped when -Pn is set (treat all hosts as live).
+        if len(hosts) > 1 and not self.no_ping_sweep:
+            live_hosts = self.discover_live_hosts(hosts)
+            if live_hosts:
+                print(f"  {len(live_hosts)}/{len(hosts)} host(s) responded to ping — port scanning live hosts only.")
+                hosts = live_hosts
+            else:
+                print(f"  Ping sweep got no replies (ICMP may be filtered) — port scanning all {len(hosts)} addresses.")
+
         # Randomize host order for stealth scanning (if enabled)
         if self.randomize_scan:
             random.shuffle(hosts)
-            print(f"Starting scan of {len(hosts)} hosts with {len(ports)} ports each...")
-           
+            print(f"Starting port scan: {len(hosts)} host(s), {len(ports)} ports each...")
             if self.scan_delay > 0:
                 print(f"Note: Using delays up to {self.scan_delay}s between hosts")
         else:
-            print(f"Starting scan of {len(hosts)} hosts with {len(ports)} ports each...")
+            print(f"Starting port scan: {len(hosts)} host(s), {len(ports)} ports each...")
         
         # Scan hosts in parallel - increased parallelism for faster scanning
         max_host_workers = min(50, len(hosts)) if len(hosts) > 10 else len(hosts)
@@ -700,6 +749,8 @@ def main():
     parser.add_argument('--3d', '--force-3d', dest='force_3d', action='store_true', help='Generate an additional 3D force-directed graph using d3-force-3d')
     parser.add_argument('--live', action='store_true', help='Live mode: regenerate graphs after each host is scanned (requires graphs enabled)')
     parser.add_argument('--exempt', type=str, help='Comma-separated list of IPs or CIDRs to exclude from scanning (e.g., 192.168.1.1,10.0.0.0/24)')
+    parser.add_argument('--livelog', action='store_true', help='Print a line to stdout each time a port or host is discovered')
+    parser.add_argument('-Pn', dest='no_ping_sweep', action='store_true', help='Skip host discovery ping sweep and treat all addresses as live (like nmap -Pn)')
     
     args = parser.parse_args()
     
@@ -726,6 +777,8 @@ def main():
     print(f"Hostname Resolution: {'Enabled' if not args.no_resolve_hostnames else 'Disabled'}")
     print(f"Share Enumeration: {'Enabled' if not args.no_enumerate_shares else 'Disabled'}")
     print(f"Randomized Scanning: {'Enabled' if not args.no_randomize else 'Disabled'}")
+    if args.no_ping_sweep:
+        print(f"Host Discovery: Disabled (-Pn) — treating all addresses as live")
     if args.dig:
         print(f"Deep Scan (Dig): Enabled - will scan all ports on discovered hosts")
     if args.live and not args.no_graph:
@@ -734,6 +787,8 @@ def main():
         print(f"Scan Delay: Random delays up to {args.scan_delay}s between hosts")
     if args.exempt:
         print(f"Exemptions: {args.exempt}")
+    if args.livelog:
+        print(f"Live Log: Enabled - printing discoveries as they occur")
     print("=" * 50)
     
     try:
@@ -750,7 +805,9 @@ def main():
             enumerate_shares=not args.no_enumerate_shares,
             randomize_scan=not args.no_randomize,
             scan_delay=args.scan_delay,
-            exempt_list=exempt_list
+            exempt_list=exempt_list,
+            livelog=args.livelog,
+            no_ping_sweep=args.no_ping_sweep
         )
         
         # Initialize combined results
@@ -840,8 +897,7 @@ def main():
             all_ports = list(range(1, 65536))
             
             for i, host_display in enumerate(discovered_hosts):
-                # Extract IP from host display (format: "IP" or "IP-hostname")
-                host_ip = host_display.split('-')[0] if '-' in host_display else host_display
+                host_ip = combined_host_details[host_display].get('ip', host_display)
                 
                 print(f"\n🎯 Deep scanning host {i+1}/{len(discovered_hosts)}: {host_display}")
                 
@@ -862,15 +918,9 @@ def main():
             
             print(f"\n✅ Deep scan complete!")
         
-        # Use combined results for the rest of the processing
         scan_results = combined_scan_results
-        share_results = combined_share_results 
+        share_results = combined_share_results
         host_details = combined_host_details
-        
-        # Extract results from new structure
-        scan_results = results.get('scan_results', {}) if isinstance(results, dict) else results
-        share_results = results.get('share_results', {}) if isinstance(results, dict) else scanner.share_results
-        host_details = results.get('host_details', {}) if isinstance(results, dict) else {}
         
         # Display results
         if scan_results:
