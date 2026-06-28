@@ -2,7 +2,7 @@
 
 **Advanced Network Topology Scanner with Interactive D3.js Visualization**
 
-Network Vector is a powerful, Python-based network scanning tool that performs comprehensive TCP port discovery without relying on external tools like nmap or masscan. It creates beautiful, interactive D3.js visualizations to map network topology and security posture.
+Network Vector is a powerful, Python-based network scanning tool that performs comprehensive TCP port discovery, optional UDP probing, and network discovery without relying on external tools like nmap or masscan. It creates beautiful, interactive D3.js visualizations to map network topology and security posture.
 
 ## 🎥 See Network Vector in Action
 
@@ -19,10 +19,15 @@ Network Vector is a powerful, Python-based network scanning tool that performs c
 ### 🚀 Core Capabilities
 - **Ping Sweep Host Discovery** - ICMP ping sweep identifies live hosts before port scanning, dramatically reducing wasted connections on dead IPs
 - **Raw TCP Port Scanning** - Scans 750 unique ports without external dependencies
+- **UDP Service Probing** - Optional UDP scanning with service-aware payloads for DNS, NTP, SNMP, SSDP, SIP, mDNS, LLMNR, CoAP, IPMI, memcached, and more
+- **Automation JSON Reports** - Writes structured JSON reports by default for dashboards, deltas, and repeatable analysis
+- **Executive Reporting** - Summarizes live hosts, TCP/UDP exposure, high-risk services, and top exposed hosts
+- **Delta Reports** - Compare against a previous JSON scan to find new hosts, missing hosts, newly opened ports, closed ports, and changed OS guesses
 - **Connection Semaphore** - Caps concurrent open sockets at 500 to prevent silent failures from OS file-descriptor exhaustion
 - **Multi-threaded Performance** - Up to 1000 concurrent threads for fast scanning
 - **Deep Scan (Dig)** - Scan all 65535 ports on every host that had at least one open port with `--dig`
 - **All Ports Mode** - Scan all 65535 ports on the entire network with `--all-ports`
+- **All UDP Mode** - Scan all 65535 UDP ports with `--all-udp` when you need exhaustive UDP coverage
 - **Skip Discovery (-Pn)** - Treat all addresses as live and skip the ping sweep (useful when ICMP is filtered)
 - **Live Log** - Print each port or host discovery to stdout in real-time with `--livelog`
 - **Progress Indicator** - Real-time percentage progress shown during scanning
@@ -60,7 +65,9 @@ Network Vector is a powerful, Python-based network scanning tool that performs c
 - **Collapse/Expand** - Right-click network nodes to manage complexity (2D)
 - **Self-contained Output** - HTML files with embedded assets, no external dependencies
 - **Embedded Scan Data** - Complete scan results embedded in HTML with "Show Scan Data" button
-- **CSV Data Export** - Download comprehensive scan data as CSV for analysis in Excel/databases
+- **Report View** - Open executive summaries, service groups, host profiles, and delta reports from generated HTML
+- **JSON Loader** - Load a previous scan JSON in the HTML report to generate a browser-side comparison
+- **CSV/JSON Data Export** - Download comprehensive scan data as CSV or structured JSON for automation
 
 ### 🔍 Port Intelligence
 - **Comprehensive Database** - Detailed information for 130+ common services
@@ -151,6 +158,27 @@ python3 src/nvector.py 192.168.1.0/24 --all-ports
 python3 src/nvector.py 192.168.1.0/24 --ports 22 80 443 3389 5432
 ```
 
+### UDP Scanning
+```bash
+# Add common UDP service probing to the normal TCP scan
+python3 src/nvector.py 192.168.1.0/24 --udp
+
+# Probe specific UDP ports only
+python3 src/nvector.py 192.168.1.0/24 --udp-ports 53 123 161 1900 5353
+
+# Exhaustive UDP scan across all 65535 UDP ports (very slow/noisy)
+python3 src/nvector.py 192.168.1.0/24 --all-udp
+
+# Combine TCP and UDP full scans for a single host
+python3 src/nvector.py 192.168.1.100 --all-ports --all-udp
+```
+
+UDP scanning uses service-aware payloads for common protocols, including DNS, TFTP, rpcbind, NTP, NetBIOS, SNMP, CLDAP, SLP, IKE, RIP, IPMI, SQL Browser, SSDP, WS-Discovery, SIP, NAT-PMP, mDNS, LLMNR, CoAP, and memcached. Ports without a specific payload receive an empty datagram so closed ports can still be identified when the host returns ICMP port-unreachable.
+
+UDP results may include:
+- **open** — The service sent a UDP response.
+- **open|filtered** — No response was received. The port may be open, silently filtered, or dropped by a firewall.
+
 ### Visualization
 ```bash
 # Generate both 2D and 3D visualizations
@@ -162,6 +190,26 @@ python3 src/nvector.py 192.168.1.0/24 --live --3d
 # Export to CSV only, no graph
 python3 src/nvector.py 192.168.1.0/24 --no-graph
 ```
+
+### Reporting & Automation
+```bash
+# JSON reports are written by default
+python3 src/nvector.py 192.168.1.0/24
+
+# Disable JSON output
+python3 src/nvector.py 192.168.1.0/24 --no-json
+
+# Compare current results against a previous JSON report
+python3 src/nvector.py 192.168.1.0/24 --compare-json network_scan_20260628_120000.json
+```
+
+Generated HTML reports include a Report button for executive summaries, service groups, host profiles, and delta reports. Use the JSON file picker in the HTML report to load an older scan and generate a browser-side comparison summary.
+
+The report view includes:
+- **Executive summary** - Live hosts, open TCP ports, confirmed UDP ports, UDP `open|filtered` counts, high-risk services, and top exposed hosts
+- **Service groups** - Remote access, File sharing, Web/admin, Databases, Discovery/broadcast, VPN/auth, Printers/IoT, and Other
+- **Host profiles** - Hostname/IP, OS guess, TCP ports, UDP ports, SMB shares, risk level, service count, and notes
+- **Delta report** - New hosts, missing hosts, newly opened ports, closed ports, and changed OS guesses
 
 ### Multi-Network & Advanced
 ```bash
@@ -192,6 +240,12 @@ python3 src/nvector.py 192.168.1.0/24 --3d --livelog --dig --timeout 2.0
 | `--ports` | Custom port list to scan | Top 750 ports |
 | `--all-ports` | Scan all 65535 ports on every address | Off |
 | `--dig` | After initial pass, scan all 65535 ports on hosts with any open port | Off |
+| `--udp` | Also scan the common UDP port set with service-aware probes | Off |
+| `--udp-ports` | Custom UDP port list to scan; implies UDP scanning | None |
+| `--all-udp` | Scan all 65535 UDP ports; very slow/noisy on large networks | Off |
+| `--json` | Write a structured JSON report for automation | On |
+| `--no-json` | Disable structured JSON report output | Off |
+| `--compare-json` | Compare current scan to a previous JSON report | None |
 | `-Pn` | Skip ping sweep — treat all addresses as live | Off |
 | `--livelog` | Print a line to stdout for each discovered port and host | Off |
 | `--live` | Regenerate graphs after each host is found (requires graphs) | Off |
@@ -239,12 +293,73 @@ Network Vector generates self-contained HTML files with all assets embedded — 
 
 Both files include:
 - Complete embedded scan data with "Show Scan Data" button
-- In-browser CSV export button
+- In-browser Report button for executive and host-profile reporting
+- In-browser CSV export button with TCP and UDP rows
+- In-browser JSON export button for automation workflows
+- Previous JSON file loader for browser-side delta comparisons
 - Color-coded risk classification for ports
 - OS detection results per host
 
 ### CSV Export (`--no-graph`)
-When graph generation is skipped, results are written to `network_scan_YYYYMMDD_HHMMSS.csv` with separate rows for ports, SMB shares, and scan metadata — compatible with Excel, Google Sheets, and databases.
+When graph generation is skipped, results are written to `network_scan_YYYYMMDD_HHMMSS.csv` with separate rows for ports, SMB shares, and scan metadata — compatible with Excel, Google Sheets, and databases. CSV rows include protocol (`tcp`/`udp`), status/confidence, service category, and risk level.
+
+CSV columns:
+- `Type`
+- `IP Address`
+- `Hostname`
+- `Protocol`
+- `Port`
+- `Service`
+- `Category`
+- `Risk Level`
+- `Status`
+- `Confidence`
+- `SMB Share`
+- `OS Detection`
+- `Response Time`
+- `Notes`
+
+### JSON Report
+JSON reports are written by default to `network_scan_YYYYMMDD_HHMMSS.json`. The structured report includes:
+- Executive summary
+- Host profiles
+- TCP and UDP service rows
+- Service grouping categories
+- Raw scan data
+- Delta report data when `--compare-json` is used
+
+Top-level JSON keys:
+- `schema_version`
+- `scan_info`
+- `executive_summary`
+- `host_profiles`
+- `service_rows`
+- `service_categories`
+- `raw`
+- `delta_report` when comparing with `--compare-json`
+
+### Delta Reports
+Delta reports can be generated two ways:
+- CLI: run with `--compare-json previous_scan.json`
+- HTML: open a generated report, choose a previous JSON file with the file picker, then open the Report view
+
+Delta output highlights:
+- New hosts
+- Missing hosts
+- Newly opened ports
+- Closed ports
+- Changed OS guesses
+
+### Service Categories
+Network Vector assigns each discovered service to a reporting category:
+- **Remote access** - SSH, Telnet, RDP, VNC, WinRM, X11
+- **File sharing** - FTP, TFTP, SMB, NetBIOS, NFS, AFP, rsync
+- **Web/admin** - HTTP, HTTPS, CUPS, alternate web ports, admin consoles
+- **Databases** - SQL Server, Oracle, MySQL, PostgreSQL, Redis, Elasticsearch, memcached
+- **Discovery/broadcast** - DNS, DHCP, NTP, SNMP, SSDP, WS-Discovery, mDNS, LLMNR
+- **VPN/auth** - TACACS, Kerberos, LDAP, IPsec/IKE, RADIUS, SIP
+- **Printers/IoT** - LPD, IPP, IPMI, JetDirect, BACnet, CoAP
+- **Other** - Services that do not match a known reporting group
 
 ### Live Log (`--livelog`)
 Each discovery prints immediately to stdout:
@@ -271,6 +386,11 @@ Network Vector scans **750 unique ports** covering:
 - **Development Ports** (3000–4000): Node.js, Rails, Django applications
 - **Enterprise Services** (389, 636, etc.): LDAP, Active Directory
 
+### UDP Coverage
+UDP scanning is optional and runs after the TCP phase against the same discovered/live host list. By default, `--udp` scans 101 common UDP ports. `--udp-ports` accepts an explicit list, and `--all-udp` expands the scan to ports 1-65535.
+
+Network Vector includes active UDP payloads for 26 common services to improve detection accuracy. Some UDP protocols answer only to well-formed requests, while others stay silent even when open; this is why UDP output distinguishes confirmed `open` ports from `open|filtered` ports.
+
 ### Visualization Technology
 - **D3.js v7** — Force-directed 2D graph
 - **3d-force-graph v1.73.6** — Three.js-based 3D graph
@@ -279,12 +399,13 @@ Network Vector scans **750 unique ports** covering:
 
 ## 🛡️ Security Considerations
 
-Network Vector performs TCP scanning which generates network traffic. Use responsibly:
+Network Vector performs TCP scanning and optional UDP probing, both of which generate network traffic. Use responsibly:
 
 - Only scan networks you own or have explicit permission to test
 - Use `--exempt` to exclude sensitive or critical hosts
 - Use `--scan-delay` and lower `--threads` for gentler scanning
 - Use `-Pn` only when you know hosts are live — it skips discovery and port-scans every address
+- Use `--all-udp` carefully; exhaustive UDP scans can be slow, noisy, and more likely to trigger monitoring systems
 
 ## 🤝 Contributing
 

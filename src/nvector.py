@@ -796,7 +796,163 @@ class RawPortScanner:
             'udp_results': dict(self.udp_results),
         }
 
-def export_to_csv(scan_results, share_results, host_details, target, ports_scanned, args):
+SERVICE_CATEGORIES = {
+    'Remote access': {22, 23, 3389, 5900, 5901, 5902, 5985, 5986, 6000},
+    'File sharing': {20, 21, 69, 111, 135, 137, 138, 139, 445, 548, 873, 2049},
+    'Web/admin': {80, 443, 631, 8000, 8008, 8080, 8081, 8088, 8443, 8888, 9000, 9090, 10000},
+    'Databases': {1433, 1434, 1521, 3306, 5432, 6379, 9200, 11211, 27017},
+    'Discovery/broadcast': {7, 9, 17, 19, 37, 53, 67, 68, 123, 137, 138, 161, 162, 1900, 3702, 5353, 5355},
+    'VPN/auth': {49, 88, 389, 500, 1701, 1812, 1813, 4500, 5060, 5061},
+    'Printers/IoT': {515, 631, 623, 9100, 47808, 5683},
+}
+
+RISK_ORDER = {
+    'HIGH RISK': 4,
+    'MEDIUM RISK': 3,
+    'UNKNOWN RISK': 2,
+    'LOW RISK': 1,
+    'SECURE': 0,
+}
+
+def split_host_key(host_key):
+    parts = host_key.split('-', 1)
+    return {
+        'ip': parts[0],
+        'hostname': parts[1] if len(parts) > 1 else None,
+    }
+
+def get_service_category(port, protocol='tcp'):
+    for category, ports in SERVICE_CATEGORIES.items():
+        if port in ports:
+            return category
+    if protocol == 'udp':
+        return 'Discovery/broadcast'
+    return 'Other'
+
+def get_risk_level(port):
+    from port_descriptions import get_port_security_level
+    return get_port_security_level(port)
+
+def get_port_service(port):
+    from port_descriptions import get_port_description
+    info = get_port_description(port)
+    return info.get('description', f'Port {port}')
+
+def build_service_row(host_key, port, protocol, status, host_details):
+    host_parts = split_host_key(host_key)
+    host_detail = host_details.get(host_key, {})
+    response_time = ''
+    confidence = 'confirmed' if status == 'open' else status
+
+    if protocol == 'tcp':
+        for port_data in host_detail.get('open_ports', []):
+            if port_data.get('port') == port and port_data.get('response_time') is not None:
+                response_time = f"{port_data['response_time'] * 1000:.3f}ms"
+                break
+    elif status == 'open':
+        response_time = 'response received'
+
+    risk_level = get_risk_level(port)
+    return {
+        'type': 'port',
+        'host': host_key,
+        'ip': host_parts['ip'],
+        'hostname': host_parts['hostname'] or 'Unknown',
+        'protocol': protocol,
+        'port': port,
+        'service': get_port_service(port),
+        'category': get_service_category(port, protocol),
+        'risk_level': risk_level,
+        'risk_score': RISK_ORDER.get(risk_level, 2),
+        'status': status,
+        'confidence': confidence,
+        'response_time': response_time,
+    }
+
+def build_host_profiles(scan_results, share_results, host_details, udp_results):
+    hosts = sorted(set(host_details) | set(scan_results) | set(share_results) | set(udp_results))
+    profiles = []
+    service_rows = []
+
+    for host_key in hosts:
+        host_parts = split_host_key(host_key)
+        os_detection = host_details.get(host_key, {}).get('os_detection', {})
+        tcp_ports = sorted(scan_results.get(host_key, []))
+        udp_open = sorted(udp_results.get(host_key, {}).get('open', []))
+        udp_filtered = sorted(udp_results.get(host_key, {}).get('open|filtered', []))
+        shares = sorted(share_results.get(host_key, []))
+
+        host_rows = []
+        for port in tcp_ports:
+            row = build_service_row(host_key, port, 'tcp', 'open', host_details)
+            service_rows.append(row)
+            host_rows.append(row)
+        for port in udp_open:
+            row = build_service_row(host_key, port, 'udp', 'open', host_details)
+            service_rows.append(row)
+            host_rows.append(row)
+        for port in udp_filtered:
+            row = build_service_row(host_key, port, 'udp', 'open|filtered', host_details)
+            service_rows.append(row)
+            host_rows.append(row)
+
+        highest_risk = max((row['risk_score'] for row in host_rows), default=0)
+        risk_level = next((name for name, score in RISK_ORDER.items() if score == highest_risk), 'SECURE')
+        notes = []
+        if udp_filtered:
+            notes.append(f"{len(udp_filtered)} UDP port(s) are open|filtered")
+        if shares:
+            notes.append(f"{len(shares)} SMB/NFS share(s) discovered")
+
+        profiles.append({
+            'host': host_key,
+            'ip': host_parts['ip'],
+            'hostname': host_parts['hostname'] or 'Unknown',
+            'os_guess': os_detection.get('os', 'Unknown'),
+            'os_confidence': os_detection.get('confidence', 'Unknown'),
+            'tcp_ports': tcp_ports,
+            'udp_open_ports': udp_open,
+            'udp_open_filtered_ports': udp_filtered,
+            'smb_shares': shares,
+            'risk_level': risk_level,
+            'risk_score': highest_risk,
+            'service_count': len(tcp_ports) + len(udp_open) + len(udp_filtered),
+            'notes': notes,
+        })
+
+    return profiles, service_rows
+
+def build_executive_summary(host_profiles, service_rows):
+    high_risk = [row for row in service_rows if row['risk_level'] == 'HIGH RISK']
+    top_hosts = sorted(host_profiles, key=lambda h: (h['service_count'], h['risk_score']), reverse=True)[:10]
+    return {
+        'total_live_hosts': len(host_profiles),
+        'total_open_tcp_ports': sum(1 for row in service_rows if row['protocol'] == 'tcp' and row['status'] == 'open'),
+        'confirmed_udp_open_ports': sum(1 for row in service_rows if row['protocol'] == 'udp' and row['status'] == 'open'),
+        'udp_open_filtered_count': sum(1 for row in service_rows if row['protocol'] == 'udp' and row['status'] == 'open|filtered'),
+        'high_risk_services_found': len(high_risk),
+        'high_risk_services': high_risk[:25],
+        'top_exposed_hosts': top_hosts,
+    }
+
+def build_report_data(scan_results, share_results, host_details, udp_results, scan_info):
+    host_profiles, service_rows = build_host_profiles(scan_results, share_results, host_details, udp_results)
+    return {
+        'schema_version': 1,
+        'scan_info': scan_info,
+        'executive_summary': build_executive_summary(host_profiles, service_rows),
+        'host_profiles': host_profiles,
+        'service_rows': sorted(service_rows, key=lambda r: (-r['risk_score'], r['host'], r['protocol'], r['port'])),
+        'service_categories': sorted(SERVICE_CATEGORIES.keys()) + ['Other'],
+        'raw': {
+            'scan_results': scan_results,
+            'share_results': share_results,
+            'host_details': host_details,
+            'udp_results': udp_results,
+        },
+    }
+
+def export_to_csv(report_data, target, args):
     """
     Export scan results to CSV file when --no-graph is used.
     """
@@ -807,16 +963,14 @@ def export_to_csv(scan_results, share_results, host_details, target, ports_scann
     csv_filename = f"network_scan_{timestamp}.csv"
 
     try:
-        # Import port descriptions for service names
-        from port_descriptions import PORT_DESCRIPTIONS
-
         with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
 
             # Write header
             writer.writerow([
-                'Type', 'IP Address', 'Hostname', 'Port', 'Service',
-                'SMB Share', 'OS Detection', 'Response Time'
+                'Type', 'IP Address', 'Hostname', 'Protocol', 'Port', 'Service',
+                'Category', 'Risk Level', 'Status', 'Confidence', 'SMB Share',
+                'OS Detection', 'Response Time', 'Notes'
             ])
 
             # Helper function to escape fields
@@ -825,70 +979,46 @@ def export_to_csv(scan_results, share_results, host_details, target, ports_scann
                     return ''
                 return str(field).replace('\n', ' ').replace('\r', ' ')
 
-            # Process each host from scan_results
-            for host_key, ports in scan_results.items():
-                # Extract IP and hostname from the key
-                parts = host_key.split('-')
-                ip = parts[0]
-                hostname = '-'.join(parts[1:]) if len(parts) > 1 else 'Unknown'
+            os_by_host = {
+                profile['host']: f"{profile['os_guess']} ({profile['os_confidence']} confidence)"
+                for profile in report_data.get('host_profiles', [])
+            }
 
-                # Get host details
-                host_detail = host_details.get(host_key, {})
-                os_detection = host_detail.get('os_detection', {})
-                os_info = f"{os_detection.get('os', 'Unknown')} ({os_detection.get('confidence', 'Unknown')} confidence)" if os_detection.get('os') else 'Not Available'
-                avg_response_time = f"{(host_detail.get('avg_response_time', 0) * 1000):.3f}ms" if host_detail.get('avg_response_time') is not None else 'N/A'
+            for row in report_data.get('service_rows', []):
+                writer.writerow([
+                    'Port',
+                    clean_field(row['ip']),
+                    clean_field(row['hostname']),
+                    row['protocol'],
+                    row['port'],
+                    clean_field(row['service']),
+                    clean_field(row['category']),
+                    clean_field(row['risk_level']),
+                    clean_field(row['status']),
+                    clean_field(row['confidence']),
+                    '',
+                    clean_field(os_by_host.get(row['host'], 'Not Available')),
+                    clean_field(row['response_time']),
+                    '',
+                ])
 
-                # Add rows for open ports
-                if ports:
-                    for port in ports:
-                        # Look up service name from port descriptions
-                        port_info = PORT_DESCRIPTIONS.get(port, {})
-                        service = port_info.get('description', f'Port {port}') if port_info else f'Port {port}'
-
-                        # Get individual port response time if available
-                        port_response_time = avg_response_time  # fallback to average
-                        if host_detail.get('open_ports'):
-                            port_data = next((p for p in host_detail['open_ports'] if p.get('port') == port), None)
-                            if port_data and port_data.get('response_time') is not None:
-                                port_response_time = f"{(port_data['response_time'] * 1000):.3f}ms"
-
-                        writer.writerow([
-                            'Port',
-                            clean_field(ip),
-                            clean_field(hostname),
-                            port,
-                            clean_field(service),
-                            '',  # Empty SMB share column for port rows
-                            clean_field(os_info),
-                            port_response_time
-                        ])
-
-                # Add rows for SMB shares
-                shares = share_results.get(host_key, [])
-                if shares:
-                    for share in shares:
-                        writer.writerow([
-                            'Share',
-                            clean_field(ip),
-                            clean_field(hostname),
-                            '',  # Empty port column for share rows
-                            '',  # Empty service column for share rows
-                            clean_field(share),
-                            clean_field(os_info),
-                            avg_response_time
-                        ])
-
-                # If host has no ports or shares, add a basic host entry
-                if not ports and not shares:
+            for profile in report_data.get('host_profiles', []):
+                for share in profile.get('smb_shares', []):
                     writer.writerow([
-                        'Host',
-                        clean_field(ip),
-                        clean_field(hostname),
+                        'Share',
+                        clean_field(profile['ip']),
+                        clean_field(profile['hostname']),
                         '',
                         '',
                         '',
-                        clean_field(os_info),
-                        avg_response_time
+                        'File sharing',
+                        clean_field(profile['risk_level']),
+                        'open',
+                        'enumerated',
+                        clean_field(share),
+                        clean_field(f"{profile['os_guess']} ({profile['os_confidence']} confidence)"),
+                        '',
+                        clean_field('; '.join(profile.get('notes', []))),
                     ])
 
             # Add scan metadata
@@ -896,8 +1026,9 @@ def export_to_csv(scan_results, share_results, host_details, target, ports_scann
             writer.writerow(['# Scan Metadata'])
             writer.writerow([f'# Target: {target}'])
             writer.writerow([f'# Scan Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
-            writer.writerow([f'# Total Hosts: {len(host_details)}'])
-            writer.writerow([f'# Ports Scanned: {ports_scanned}'])
+            writer.writerow([f'# Total Hosts: {report_data["executive_summary"]["total_live_hosts"]}'])
+            writer.writerow([f'# TCP Ports Scanned: {report_data["scan_info"].get("ports_scanned", "Unknown")}'])
+            writer.writerow([f'# UDP Ports Scanned: {report_data["scan_info"].get("udp_ports_scanned", 0)}'])
             writer.writerow([f'# Hostname Resolution: {"Enabled" if not args.no_resolve_hostnames else "Disabled"}'])
             writer.writerow([f'# Share Enumeration: {"Enabled" if not args.no_enumerate_shares else "Disabled"}'])
             writer.writerow([f'# Randomized Scanning: {"Enabled" if not args.no_randomize else "Disabled"}'])
@@ -910,6 +1041,69 @@ def export_to_csv(scan_results, share_results, host_details, target, ports_scann
     except Exception as e:
         print(f"\n❌ CSV export failed: {e}")
         return None
+
+def export_to_json(report_data, timestamp=None):
+    from datetime import datetime
+
+    timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_filename = f"network_scan_{timestamp}.json"
+    try:
+        with open(json_filename, 'w', encoding='utf-8') as jsonfile:
+            json.dump(report_data, jsonfile, indent=2, default=str)
+        print(f"\n📄 JSON report completed: {json_filename}")
+        return json_filename
+    except Exception as e:
+        print(f"\n❌ JSON export failed: {e}")
+        return None
+
+def load_report_json(path):
+    with open(path, 'r', encoding='utf-8') as report_file:
+        data = json.load(report_file)
+    if 'raw' in data and 'executive_summary' in data:
+        return data
+    return {
+        'schema_version': 0,
+        'scan_info': data.get('scan_info', {}),
+        'executive_summary': data.get('executive_summary', {}),
+        'host_profiles': data.get('host_profiles', []),
+        'service_rows': data.get('service_rows', []),
+        'raw': {
+            'scan_results': data.get('scan_results', {}),
+            'share_results': data.get('share_results', {}),
+            'host_details': data.get('host_details', {}),
+            'udp_results': data.get('udp_results', {}),
+        },
+    }
+
+def service_identity(row):
+    return (row.get('host'), row.get('protocol'), row.get('port'))
+
+def compare_reports(current_report, previous_report):
+    current_hosts = {profile['host']: profile for profile in current_report.get('host_profiles', [])}
+    previous_hosts = {profile['host']: profile for profile in previous_report.get('host_profiles', [])}
+    current_services = {service_identity(row): row for row in current_report.get('service_rows', [])}
+    previous_services = {service_identity(row): row for row in previous_report.get('service_rows', [])}
+
+    changed_os = []
+    for host in sorted(set(current_hosts) & set(previous_hosts)):
+        old_os = previous_hosts[host].get('os_guess', 'Unknown')
+        new_os = current_hosts[host].get('os_guess', 'Unknown')
+        if old_os != new_os:
+            changed_os.append({
+                'host': host,
+                'previous_os': old_os,
+                'current_os': new_os,
+            })
+
+    return {
+        'previous_scan': previous_report.get('scan_info', {}),
+        'current_scan': current_report.get('scan_info', {}),
+        'new_hosts': [current_hosts[host] for host in sorted(set(current_hosts) - set(previous_hosts))],
+        'missing_hosts': [previous_hosts[host] for host in sorted(set(previous_hosts) - set(current_hosts))],
+        'newly_opened_ports': [current_services[key] for key in sorted(set(current_services) - set(previous_services))],
+        'closed_ports': [previous_services[key] for key in sorted(set(previous_services) - set(current_services))],
+        'changed_os_guesses': changed_os,
+    }
 
 def normalize_port_list(ports):
     """Return sorted unique ports after validating the TCP/UDP port range."""
@@ -940,6 +1134,9 @@ def main():
     parser.add_argument('--udp', action='store_true', help=f'Also scan top {len(TOP_UDP_PORTS)} UDP ports (53, 123, 161, 1900…)')
     parser.add_argument('--all-udp', action='store_true', help='Scan all 65535 UDP ports (warning: very slow and noisy)')
     parser.add_argument('--udp-ports', nargs='+', type=int, metavar='PORT', help='Custom UDP ports to scan (implies --udp)')
+    parser.add_argument('--json', dest='json_report', action='store_true', default=True, help='Write JSON report for automation (default: enabled)')
+    parser.add_argument('--no-json', dest='json_report', action='store_false', help='Disable JSON report export')
+    parser.add_argument('--compare-json', metavar='PATH', help='Compare this scan against a previous Network Vector JSON report')
 
     args = parser.parse_args()
 
@@ -998,6 +1195,10 @@ def main():
         print(f"Exemptions: {args.exempt}")
     if args.livelog:
         print(f"Live Log: Enabled - printing discoveries as they occur")
+    if args.json_report:
+        print(f"JSON Report: Enabled")
+    if args.compare_json:
+        print(f"Delta Compare: {args.compare_json}")
     print("=" * 50)
 
     try:
@@ -1135,6 +1336,47 @@ def main():
         share_results = combined_share_results
         host_details = combined_host_details
         udp_results = combined_udp_results
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        scan_info = {
+            'target': args.target,
+            'networks_scanned': len(target_networks),
+            'total_hosts': len(host_details),
+            'scan_time': f"Completed at {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            'ports_scanned': len(ports_to_scan),
+            'udp_ports_scanned': len(udp_ports_to_scan) if udp_ports_to_scan else 0,
+            'udp_scan_mode': udp_scan_mode,
+            'hostname_resolution': not args.no_resolve_hostnames,
+            'share_enumeration': not args.no_enumerate_shares,
+            'randomized_scan': not args.no_randomize,
+            'stealth_mode': args.scan_delay > 0,
+        }
+        report_data = build_report_data(scan_results, share_results, host_details, udp_results, scan_info)
+
+        if args.compare_json:
+            try:
+                previous_report = load_report_json(args.compare_json)
+                report_data['delta_report'] = compare_reports(report_data, previous_report)
+                report_data['comparison_executive_summary'] = previous_report.get('executive_summary', {})
+                print(f"\nDelta report prepared against: {args.compare_json}")
+            except Exception as e:
+                print(f"\n⚠️ Delta compare skipped: {e}")
+
+        if args.json_report:
+            export_to_json(report_data, timestamp)
+
+        summary = report_data['executive_summary']
+        print("\nExecutive Summary:")
+        print(f"  Live hosts: {summary['total_live_hosts']}")
+        print(f"  Open TCP ports: {summary['total_open_tcp_ports']}")
+        print(f"  Confirmed UDP open ports: {summary['confirmed_udp_open_ports']}")
+        print(f"  UDP open|filtered: {summary['udp_open_filtered_count']}")
+        print(f"  High-risk services: {summary['high_risk_services_found']}")
+        if summary['top_exposed_hosts']:
+            exposed = ', '.join(
+                f"{host['host']} ({host['service_count']})"
+                for host in summary['top_exposed_hosts'][:5]
+            )
+            print(f"  Top exposed hosts: {exposed}")
 
         # Display results
         if scan_results or udp_results:
@@ -1174,9 +1416,6 @@ def main():
                 if not args.no_enumerate_shares and share_results:
                     print("Note: Discovered shares will be connected to dedicated 'Shares' nodes for each host")
 
-                # Create timestamped filename
-                from datetime import datetime
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 html_filename = f"network_scan_{timestamp}.html"
 
                 # Prepare scan data for embedding with host details
@@ -1185,18 +1424,9 @@ def main():
                     'share_results': share_results,
                     'host_details': host_details,
                     'udp_results': udp_results,
+                    'report': report_data,
                     'timestamp': time.time(),
-                    'scan_info': {
-                        'target': args.target,  # Original comma-separated input
-                        'networks_scanned': len(target_networks),
-                        'total_hosts': len(host_details),
-                        'scan_time': f"Completed at {time.strftime('%Y-%m-%d %H:%M:%S')}",
-                        'ports_scanned': len(ports_to_scan),
-                        'hostname_resolution': not args.no_resolve_hostnames,
-                        'share_enumeration': not args.no_enumerate_shares,
-                        'randomized_scan': not args.no_randomize,
-                        'stealth_mode': args.scan_delay > 0
-                    }
+                    'scan_info': scan_info
                 }
 
                 # Use custom D3.js graph (now the only option)
@@ -1216,7 +1446,7 @@ def main():
             else:
                 # Export to CSV when graph generation is skipped
                 print("\nGraph generation skipped. Exporting results to CSV...")
-                csv_file = export_to_csv(scan_results, share_results, host_details, args.target, len(ports_to_scan), args)
+                csv_file = export_to_csv(report_data, args.target, args)
                 if csv_file:
                     print("💡 Use Excel, Google Sheets, or any CSV viewer to analyze the data")
 
@@ -1230,4 +1460,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

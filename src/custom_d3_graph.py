@@ -551,6 +551,11 @@ class CustomD3ForceGraph:
                 </div>
                 <button onclick="showScanData()" style="margin-top: 10px; background: #1a237e; color: white; border: 1px solid #FFFF00; padding: 5px; border-radius: 3px; cursor: pointer;">📄 Show Scan Data</button>
                 <button onclick="downloadCSV()" style="margin-top: 10px; margin-left: 5px; background: #388E3C; color: white; border: 1px solid #4CAF50; padding: 5px; border-radius: 3px; cursor: pointer;">📊 Download CSV</button>
+                <button onclick="showReport()" style="margin-top: 10px; margin-left: 5px; background: #4527A0; color: white; border: 1px solid #7E57C2; padding: 5px; border-radius: 3px; cursor: pointer;">📋 Report</button>
+                <button onclick="downloadJSON()" style="margin-top: 10px; margin-left: 5px; background: #00695C; color: white; border: 1px solid #26A69A; padding: 5px; border-radius: 3px; cursor: pointer;">JSON</button>
+                <div style="margin-top: 8px;">
+                    <input type="file" id="previous-json-input" accept="application/json,.json" onchange="loadPreviousJSON(this.files[0])" style="font-size: 11px; color: #ddd; max-width: 260px;">
+                </div>
                 <div style="margin-top: 10px;">
                     <button onclick="zoomToFit()" style="background: #2E7D32; color: white; border: 1px solid #4CAF50; padding: 3px 6px; border-radius: 3px; cursor: pointer; margin-right: 5px;">🔍 Fit All</button>
                     <button onclick="zoomReset()" style="background: #1976D2; color: white; border: 1px solid #2196F3; padding: 3px 6px; border-radius: 3px; cursor: pointer; margin-right: 5px;">🎯 Reset</button>
@@ -1168,7 +1173,199 @@ ${{JSON.stringify(window.SCAN_DATA, null, 2)}}`;
                 alert('❌ No scan data found embedded in this file.');
             }}
         }}
-        
+
+        function getReportData() {{
+            return window.SCAN_DATA && window.SCAN_DATA.report ? window.SCAN_DATA.report : null;
+        }}
+
+        function escapeHtml(value) {{
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({{
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }}[ch]));
+        }}
+
+        function renderSummary(summary, title) {{
+            if (!summary) return '';
+            return `
+                <h3>${{escapeHtml(title)}}</h3>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px;">
+                    <div><strong>Live hosts</strong><br>${{summary.total_live_hosts ?? 0}}</div>
+                    <div><strong>Open TCP</strong><br>${{summary.total_open_tcp_ports ?? 0}}</div>
+                    <div><strong>UDP open</strong><br>${{summary.confirmed_udp_open_ports ?? 0}}</div>
+                    <div><strong>UDP open|filtered</strong><br>${{summary.udp_open_filtered_count ?? 0}}</div>
+                    <div><strong>High-risk services</strong><br>${{summary.high_risk_services_found ?? 0}}</div>
+                </div>
+            `;
+        }}
+
+        function renderServiceRows(rows, title, limit = 25) {{
+            if (!rows || rows.length === 0) return `<h3>${{escapeHtml(title)}}</h3><p>None.</p>`;
+            const body = rows.slice(0, limit).map(row => `
+                <tr>
+                    <td>${{escapeHtml(row.host)}}</td>
+                    <td>${{escapeHtml(row.protocol)}}</td>
+                    <td>${{escapeHtml(row.port)}}</td>
+                    <td>${{escapeHtml(row.status)}}</td>
+                    <td>${{escapeHtml(row.risk_level)}}</td>
+                    <td>${{escapeHtml(row.category)}}</td>
+                    <td>${{escapeHtml(row.service)}}</td>
+                </tr>
+            `).join('');
+            return `
+                <h3>${{escapeHtml(title)}} (${{rows.length}})</h3>
+                <table><thead><tr><th>Host</th><th>Protocol</th><th>Port</th><th>Status</th><th>Risk</th><th>Category</th><th>Service</th></tr></thead><tbody>${{body}}</tbody></table>
+            `;
+        }}
+
+        function renderHostProfiles(hosts) {{
+            if (!hosts || hosts.length === 0) return '<h3>Host Profiles</h3><p>No hosts.</p>';
+            return `
+                <h3>Host Profiles</h3>
+                ${{hosts.map(host => `
+                    <section style="border:1px solid #3949ab;padding:10px;margin:10px 0;border-radius:4px;">
+                        <h4>${{escapeHtml(host.host)}} <span style="color:#bbb;">${{escapeHtml(host.risk_level)}}</span></h4>
+                        <p><strong>OS:</strong> ${{escapeHtml(host.os_guess)}} (${{escapeHtml(host.os_confidence)}} confidence)</p>
+                        <p><strong>TCP:</strong> ${{escapeHtml((host.tcp_ports || []).join(', ') || 'None')}}</p>
+                        <p><strong>UDP open:</strong> ${{escapeHtml((host.udp_open_ports || []).join(', ') || 'None')}}</p>
+                        <p><strong>UDP open|filtered:</strong> ${{escapeHtml((host.udp_open_filtered_ports || []).join(', ') || 'None')}}</p>
+                        <p><strong>Shares:</strong> ${{escapeHtml((host.smb_shares || []).join(', ') || 'None')}}</p>
+                        <p><strong>Notes:</strong> ${{escapeHtml((host.notes || []).join('; ') || 'None')}}</p>
+                    </section>
+                `).join('')}}
+            `;
+        }}
+
+        function renderCategories(rows) {{
+            const grouped = {{}};
+            (rows || []).forEach(row => {{
+                const category = row.category || 'Other';
+                grouped[category] = grouped[category] || [];
+                grouped[category].push(row);
+            }});
+            return `
+                <h3>Service Groups</h3>
+                ${{Object.keys(grouped).sort().map(category => `
+                    <h4>${{escapeHtml(category)}} (${{grouped[category].length}})</h4>
+                    ${{renderServiceRows(grouped[category], category, 10).replace(/^<h3>.*?<\\/h3>/, '')}}
+                `).join('')}}
+            `;
+        }}
+
+        function compareReportData(current, previous) {{
+            const byHost = list => Object.fromEntries((list || []).map(item => [item.host, item]));
+            const serviceKey = row => `${{row.host}}|${{row.protocol}}|${{row.port}}`;
+            const currentHosts = byHost(current.host_profiles);
+            const previousHosts = byHost(previous.host_profiles);
+            const currentServices = Object.fromEntries((current.service_rows || []).map(row => [serviceKey(row), row]));
+            const previousServices = Object.fromEntries((previous.service_rows || []).map(row => [serviceKey(row), row]));
+            const currentHostKeys = new Set(Object.keys(currentHosts));
+            const previousHostKeys = new Set(Object.keys(previousHosts));
+            const currentServiceKeys = new Set(Object.keys(currentServices));
+            const previousServiceKeys = new Set(Object.keys(previousServices));
+            return {{
+                new_hosts: [...currentHostKeys].filter(host => !previousHostKeys.has(host)).map(host => currentHosts[host]),
+                missing_hosts: [...previousHostKeys].filter(host => !currentHostKeys.has(host)).map(host => previousHosts[host]),
+                newly_opened_ports: [...currentServiceKeys].filter(key => !previousServiceKeys.has(key)).map(key => currentServices[key]),
+                closed_ports: [...previousServiceKeys].filter(key => !currentServiceKeys.has(key)).map(key => previousServices[key]),
+                changed_os_guesses: [...currentHostKeys].filter(host => previousHostKeys.has(host) && currentHosts[host].os_guess !== previousHosts[host].os_guess).map(host => ({{
+                    host,
+                    previous_os: previousHosts[host].os_guess,
+                    current_os: currentHosts[host].os_guess
+                }}))
+            }};
+        }}
+
+        function renderDelta(delta) {{
+            if (!delta) return '';
+            const changedOsRows = (delta.changed_os_guesses || []).map(row => `
+                <tr><td>${{escapeHtml(row.host)}}</td><td>${{escapeHtml(row.previous_os)}}</td><td>${{escapeHtml(row.current_os)}}</td></tr>
+            `).join('');
+            return `
+                <h2>Delta Report</h2>
+                <p><strong>New hosts:</strong> ${{(delta.new_hosts || []).length}} |
+                   <strong>Missing hosts:</strong> ${{(delta.missing_hosts || []).length}} |
+                   <strong>Newly opened ports:</strong> ${{(delta.newly_opened_ports || []).length}} |
+                   <strong>Closed ports:</strong> ${{(delta.closed_ports || []).length}} |
+                   <strong>Changed OS guesses:</strong> ${{(delta.changed_os_guesses || []).length}}</p>
+                <h3>New Hosts</h3><p>${{escapeHtml((delta.new_hosts || []).map(h => h.host).join(', ') || 'None')}}</p>
+                <h3>Missing Hosts</h3><p>${{escapeHtml((delta.missing_hosts || []).map(h => h.host).join(', ') || 'None')}}</p>
+                ${{renderServiceRows(delta.newly_opened_ports || [], 'Newly Opened Ports', 50)}}
+                ${{renderServiceRows(delta.closed_ports || [], 'Closed Ports', 50)}}
+                <h3>Changed OS Guesses</h3>
+                <table><thead><tr><th>Host</th><th>Previous</th><th>Current</th></tr></thead><tbody>${{changedOsRows || '<tr><td colspan="3">None</td></tr>'}}</tbody></table>
+            `;
+        }}
+
+        function showReport(previousReport = null) {{
+            const report = getReportData();
+            if (!report) {{
+                alert('No structured report data found.');
+                return;
+            }}
+            const delta = previousReport ? compareReportData(report, previousReport) : report.delta_report;
+            const previousSummary = previousReport ? previousReport.executive_summary : report.comparison_executive_summary;
+            const html = `
+                <html>
+                    <head>
+                        <title>Network Vector Report</title>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; background:#101936; color:white; padding:20px; }}
+                            table {{ width:100%; border-collapse:collapse; margin:10px 0; }}
+                            th, td {{ border:1px solid #3949ab; padding:6px; text-align:left; vertical-align:top; }}
+                            th {{ background:#1a237e; }}
+                            h2, h3 {{ color:#FFEB3B; }}
+                        </style>
+                    </head>
+                    <body>
+                        <h1>Network Vector Report</h1>
+                        ${{renderSummary(report.executive_summary, 'Executive Summary')}}
+                        ${{previousSummary ? renderSummary(previousSummary, 'Loaded Previous Scan Summary') : ''}}
+                        ${{renderDelta(delta)}}
+                        ${{renderServiceRows(report.executive_summary.high_risk_services || [], 'High-Risk Services', 50)}}
+                        ${{renderCategories(report.service_rows || [])}}
+                        ${{renderHostProfiles(report.host_profiles || [])}}
+                    </body>
+                </html>
+            `;
+            const popup = window.open('', 'NetworkVectorReport', 'width=1100,height=800,scrollbars=yes');
+            popup.document.write(html);
+            popup.document.close();
+        }}
+
+        function downloadJSON() {{
+            const report = getReportData();
+            if (!report) {{
+                alert('No structured report data found.');
+                return;
+            }}
+            const blob = new Blob([JSON.stringify(report, null, 2)], {{type: 'application/json'}});
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `network_scan_${{new Date().toISOString().replace(/[:.]/g, '-')}}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+        }}
+
+        function loadPreviousJSON(file) {{
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = event => {{
+                try {{
+                    const previousReport = JSON.parse(event.target.result);
+                    showReport(previousReport);
+                }} catch (error) {{
+                    alert(`Could not load JSON report: ${{error.message}}`);
+                }}
+            }};
+            reader.readAsText(file);
+        }}
+
         // Zoom control functions for large network navigation
         function zoomToFit() {{
             const bounds = container.node().getBBox();
@@ -1254,7 +1451,42 @@ ${{JSON.stringify(window.SCAN_DATA, null, 2)}}`;
                 alert('❌ No scan data available for CSV export.');
                 return;
             }}
-            
+
+            const report = getReportData();
+            if (report && report.service_rows) {{
+                const escapeCsv = (field) => {{
+                    const value = String(field ?? '');
+                    return /[",\\n]/.test(value) ? `"${{value.replace(/"/g, '""')}}"` : value;
+                }};
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "Type,IP Address,Hostname,Protocol,Port,Service,Category,Risk Level,Status,Confidence,SMB Share,OS Detection,Response Time,Notes\\n";
+                const osByHost = Object.fromEntries((report.host_profiles || []).map(host => [host.host, `${{host.os_guess}} (${{host.os_confidence}} confidence)`]));
+                (report.service_rows || []).forEach(row => {{
+                    csvContent += [
+                        'Port', row.ip, row.hostname, row.protocol, row.port, row.service, row.category,
+                        row.risk_level, row.status, row.confidence, '', osByHost[row.host] || '',
+                        row.response_time || '', ''
+                    ].map(escapeCsv).join(',') + "\\n";
+                }});
+                (report.host_profiles || []).forEach(host => {{
+                    (host.smb_shares || []).forEach(share => {{
+                        csvContent += [
+                            'Share', host.ip, host.hostname, '', '', '', 'File sharing', host.risk_level,
+                            'open', 'enumerated', share, `${{host.os_guess}} (${{host.os_confidence}} confidence)`,
+                            '', (host.notes || []).join('; ')
+                        ].map(escapeCsv).join(',') + "\\n";
+                    }});
+                }});
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `network_scan_${{new Date().toISOString().replace(/[:.]/g, '-')}}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                return;
+            }}
+
             const scanResults = window.SCAN_DATA.scan_results;
             const shareResults = window.SCAN_DATA.share_results || {{}};
             const hostDetails = window.SCAN_DATA.host_details || {{}};
@@ -2132,6 +2364,11 @@ class CustomD3Force3DGraph:
             </div>
             <button onclick="showScanData()" style="margin-top: 10px; background: #1a237e; color: white; border: 1px solid #FFFF00; padding: 5px; border-radius: 3px; cursor: pointer;">📄 Show Scan Data</button>
             <button onclick="downloadCSV()" style="margin-top: 10px; margin-left: 5px; background: #388E3C; color: white; border: 1px solid #4CAF50; padding: 5px; border-radius: 3px; cursor: pointer;">📊 Download CSV</button>
+            <button onclick="showReport()" style="margin-top: 10px; margin-left: 5px; background: #4527A0; color: white; border: 1px solid #7E57C2; padding: 5px; border-radius: 3px; cursor: pointer;">📋 Report</button>
+            <button onclick="downloadJSON()" style="margin-top: 10px; margin-left: 5px; background: #00695C; color: white; border: 1px solid #26A69A; padding: 5px; border-radius: 3px; cursor: pointer;">JSON</button>
+            <div style="margin-top: 8px;">
+                <input type="file" id="previous-json-input" accept="application/json,.json" onchange="loadPreviousJSON(this.files[0])" style="font-size: 11px; color: #ddd; max-width: 260px;">
+            </div>
             <div class="search-container">
                 <strong>🔎 Search Graph</strong>
                 <div style="margin-top: 5px; display: flex; align-items: center;">
@@ -2522,13 +2759,240 @@ ${{JSON.stringify(window.SCAN_DATA, null, 2)}}`;
                 alert('❌ No scan data found embedded in this file.');
             }}
         }}
-        
+
+        function getReportData() {{
+            return window.SCAN_DATA && window.SCAN_DATA.report ? window.SCAN_DATA.report : null;
+        }}
+
+        function escapeHtml(value) {{
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({{
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }}[ch]));
+        }}
+
+        function renderSummary(summary, title) {{
+            if (!summary) return '';
+            return `
+                <h3>${{escapeHtml(title)}}</h3>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px;">
+                    <div><strong>Live hosts</strong><br>${{summary.total_live_hosts ?? 0}}</div>
+                    <div><strong>Open TCP</strong><br>${{summary.total_open_tcp_ports ?? 0}}</div>
+                    <div><strong>UDP open</strong><br>${{summary.confirmed_udp_open_ports ?? 0}}</div>
+                    <div><strong>UDP open|filtered</strong><br>${{summary.udp_open_filtered_count ?? 0}}</div>
+                    <div><strong>High-risk services</strong><br>${{summary.high_risk_services_found ?? 0}}</div>
+                </div>
+            `;
+        }}
+
+        function renderServiceRows(rows, title, limit = 25) {{
+            if (!rows || rows.length === 0) return `<h3>${{escapeHtml(title)}}</h3><p>None.</p>`;
+            const body = rows.slice(0, limit).map(row => `
+                <tr>
+                    <td>${{escapeHtml(row.host)}}</td>
+                    <td>${{escapeHtml(row.protocol)}}</td>
+                    <td>${{escapeHtml(row.port)}}</td>
+                    <td>${{escapeHtml(row.status)}}</td>
+                    <td>${{escapeHtml(row.risk_level)}}</td>
+                    <td>${{escapeHtml(row.category)}}</td>
+                    <td>${{escapeHtml(row.service)}}</td>
+                </tr>
+            `).join('');
+            return `
+                <h3>${{escapeHtml(title)}} (${{rows.length}})</h3>
+                <table><thead><tr><th>Host</th><th>Protocol</th><th>Port</th><th>Status</th><th>Risk</th><th>Category</th><th>Service</th></tr></thead><tbody>${{body}}</tbody></table>
+            `;
+        }}
+
+        function renderHostProfiles(hosts) {{
+            if (!hosts || hosts.length === 0) return '<h3>Host Profiles</h3><p>No hosts.</p>';
+            return `
+                <h3>Host Profiles</h3>
+                ${{hosts.map(host => `
+                    <section style="border:1px solid #3949ab;padding:10px;margin:10px 0;border-radius:4px;">
+                        <h4>${{escapeHtml(host.host)}} <span style="color:#bbb;">${{escapeHtml(host.risk_level)}}</span></h4>
+                        <p><strong>OS:</strong> ${{escapeHtml(host.os_guess)}} (${{escapeHtml(host.os_confidence)}} confidence)</p>
+                        <p><strong>TCP:</strong> ${{escapeHtml((host.tcp_ports || []).join(', ') || 'None')}}</p>
+                        <p><strong>UDP open:</strong> ${{escapeHtml((host.udp_open_ports || []).join(', ') || 'None')}}</p>
+                        <p><strong>UDP open|filtered:</strong> ${{escapeHtml((host.udp_open_filtered_ports || []).join(', ') || 'None')}}</p>
+                        <p><strong>Shares:</strong> ${{escapeHtml((host.smb_shares || []).join(', ') || 'None')}}</p>
+                        <p><strong>Notes:</strong> ${{escapeHtml((host.notes || []).join('; ') || 'None')}}</p>
+                    </section>
+                `).join('')}}
+            `;
+        }}
+
+        function renderCategories(rows) {{
+            const grouped = {{}};
+            (rows || []).forEach(row => {{
+                const category = row.category || 'Other';
+                grouped[category] = grouped[category] || [];
+                grouped[category].push(row);
+            }});
+            return `
+                <h3>Service Groups</h3>
+                ${{Object.keys(grouped).sort().map(category => `
+                    <h4>${{escapeHtml(category)}} (${{grouped[category].length}})</h4>
+                    ${{renderServiceRows(grouped[category], category, 10).replace(/^<h3>.*?<\\/h3>/, '')}}
+                `).join('')}}
+            `;
+        }}
+
+        function compareReportData(current, previous) {{
+            const byHost = list => Object.fromEntries((list || []).map(item => [item.host, item]));
+            const serviceKey = row => `${{row.host}}|${{row.protocol}}|${{row.port}}`;
+            const currentHosts = byHost(current.host_profiles);
+            const previousHosts = byHost(previous.host_profiles);
+            const currentServices = Object.fromEntries((current.service_rows || []).map(row => [serviceKey(row), row]));
+            const previousServices = Object.fromEntries((previous.service_rows || []).map(row => [serviceKey(row), row]));
+            const currentHostKeys = new Set(Object.keys(currentHosts));
+            const previousHostKeys = new Set(Object.keys(previousHosts));
+            const currentServiceKeys = new Set(Object.keys(currentServices));
+            const previousServiceKeys = new Set(Object.keys(previousServices));
+            return {{
+                new_hosts: [...currentHostKeys].filter(host => !previousHostKeys.has(host)).map(host => currentHosts[host]),
+                missing_hosts: [...previousHostKeys].filter(host => !currentHostKeys.has(host)).map(host => previousHosts[host]),
+                newly_opened_ports: [...currentServiceKeys].filter(key => !previousServiceKeys.has(key)).map(key => currentServices[key]),
+                closed_ports: [...previousServiceKeys].filter(key => !currentServiceKeys.has(key)).map(key => previousServices[key]),
+                changed_os_guesses: [...currentHostKeys].filter(host => previousHostKeys.has(host) && currentHosts[host].os_guess !== previousHosts[host].os_guess).map(host => ({{
+                    host,
+                    previous_os: previousHosts[host].os_guess,
+                    current_os: currentHosts[host].os_guess
+                }}))
+            }};
+        }}
+
+        function renderDelta(delta) {{
+            if (!delta) return '';
+            const changedOsRows = (delta.changed_os_guesses || []).map(row => `
+                <tr><td>${{escapeHtml(row.host)}}</td><td>${{escapeHtml(row.previous_os)}}</td><td>${{escapeHtml(row.current_os)}}</td></tr>
+            `).join('');
+            return `
+                <h2>Delta Report</h2>
+                <p><strong>New hosts:</strong> ${{(delta.new_hosts || []).length}} |
+                   <strong>Missing hosts:</strong> ${{(delta.missing_hosts || []).length}} |
+                   <strong>Newly opened ports:</strong> ${{(delta.newly_opened_ports || []).length}} |
+                   <strong>Closed ports:</strong> ${{(delta.closed_ports || []).length}} |
+                   <strong>Changed OS guesses:</strong> ${{(delta.changed_os_guesses || []).length}}</p>
+                <h3>New Hosts</h3><p>${{escapeHtml((delta.new_hosts || []).map(h => h.host).join(', ') || 'None')}}</p>
+                <h3>Missing Hosts</h3><p>${{escapeHtml((delta.missing_hosts || []).map(h => h.host).join(', ') || 'None')}}</p>
+                ${{renderServiceRows(delta.newly_opened_ports || [], 'Newly Opened Ports', 50)}}
+                ${{renderServiceRows(delta.closed_ports || [], 'Closed Ports', 50)}}
+                <h3>Changed OS Guesses</h3>
+                <table><thead><tr><th>Host</th><th>Previous</th><th>Current</th></tr></thead><tbody>${{changedOsRows || '<tr><td colspan="3">None</td></tr>'}}</tbody></table>
+            `;
+        }}
+
+        function showReport(previousReport = null) {{
+            const report = getReportData();
+            if (!report) {{
+                alert('No structured report data found.');
+                return;
+            }}
+            const delta = previousReport ? compareReportData(report, previousReport) : report.delta_report;
+            const previousSummary = previousReport ? previousReport.executive_summary : report.comparison_executive_summary;
+            const html = `
+                <html>
+                    <head>
+                        <title>Network Vector Report</title>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; background:#101936; color:white; padding:20px; }}
+                            table {{ width:100%; border-collapse:collapse; margin:10px 0; }}
+                            th, td {{ border:1px solid #3949ab; padding:6px; text-align:left; vertical-align:top; }}
+                            th {{ background:#1a237e; }}
+                            h2, h3 {{ color:#FFEB3B; }}
+                        </style>
+                    </head>
+                    <body>
+                        <h1>Network Vector Report</h1>
+                        ${{renderSummary(report.executive_summary, 'Executive Summary')}}
+                        ${{previousSummary ? renderSummary(previousSummary, 'Loaded Previous Scan Summary') : ''}}
+                        ${{renderDelta(delta)}}
+                        ${{renderServiceRows(report.executive_summary.high_risk_services || [], 'High-Risk Services', 50)}}
+                        ${{renderCategories(report.service_rows || [])}}
+                        ${{renderHostProfiles(report.host_profiles || [])}}
+                    </body>
+                </html>
+            `;
+            const popup = window.open('', 'NetworkVectorReport', 'width=1100,height=800,scrollbars=yes');
+            popup.document.write(html);
+            popup.document.close();
+        }}
+
+        function downloadJSON() {{
+            const report = getReportData();
+            if (!report) {{
+                alert('No structured report data found.');
+                return;
+            }}
+            const blob = new Blob([JSON.stringify(report, null, 2)], {{type: 'application/json'}});
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `network_scan_${{new Date().toISOString().replace(/[:.]/g, '-')}}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+        }}
+
+        function loadPreviousJSON(file) {{
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = event => {{
+                try {{
+                    const previousReport = JSON.parse(event.target.result);
+                    showReport(previousReport);
+                }} catch (error) {{
+                    alert(`Could not load JSON report: ${{error.message}}`);
+                }}
+            }};
+            reader.readAsText(file);
+        }}
+
         function downloadCSV() {{
             if (!window.SCAN_DATA || !window.SCAN_DATA.scan_results) {{
                 alert('❌ No scan data available for CSV export.');
                 return;
             }}
-            
+
+            const report = getReportData();
+            if (report && report.service_rows) {{
+                const escapeCsv = (field) => {{
+                    const value = String(field ?? '');
+                    return /[",\\n]/.test(value) ? `"${{value.replace(/"/g, '""')}}"` : value;
+                }};
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "Type,IP Address,Hostname,Protocol,Port,Service,Category,Risk Level,Status,Confidence,SMB Share,OS Detection,Response Time,Notes\\n";
+                const osByHost = Object.fromEntries((report.host_profiles || []).map(host => [host.host, `${{host.os_guess}} (${{host.os_confidence}} confidence)`]));
+                (report.service_rows || []).forEach(row => {{
+                    csvContent += [
+                        'Port', row.ip, row.hostname, row.protocol, row.port, row.service, row.category,
+                        row.risk_level, row.status, row.confidence, '', osByHost[row.host] || '',
+                        row.response_time || '', ''
+                    ].map(escapeCsv).join(',') + "\\n";
+                }});
+                (report.host_profiles || []).forEach(host => {{
+                    (host.smb_shares || []).forEach(share => {{
+                        csvContent += [
+                            'Share', host.ip, host.hostname, '', '', '', 'File sharing', host.risk_level,
+                            'open', 'enumerated', share, `${{host.os_guess}} (${{host.os_confidence}} confidence)`,
+                            '', (host.notes || []).join('; ')
+                        ].map(escapeCsv).join(',') + "\\n";
+                    }});
+                }});
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `network_scan_${{new Date().toISOString().replace(/[:.]/g, '-')}}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                return;
+            }}
+
             const scanResults = window.SCAN_DATA.scan_results;
             const shareResults = window.SCAN_DATA.share_results || {{}};
             const hostDetails = window.SCAN_DATA.host_details || {{}};
