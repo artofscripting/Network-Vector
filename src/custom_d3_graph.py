@@ -2184,9 +2184,15 @@ class CustomD3Force3DGraph:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title}</title>
-    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-    <script src="https://unpkg.com/three-spritetext@1.8.2/dist/three-spritetext.min.js"></script>
-    <script src="https://unpkg.com/3d-force-graph@1.73.6/dist/3d-force-graph.min.js"></script>
+    <script type="importmap">
+    {{
+        "imports": {{
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+            "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }}
+    }}
+    </script>
     <style>
         body {{
             margin: 0;
@@ -2471,7 +2477,11 @@ class CustomD3Force3DGraph:
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import * as THREE from 'three';
+        import SpriteText from 'https://unpkg.com/three-spritetext@1.8.2/dist/three-spritetext.mjs';
+        import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.6?external=three&deps=three-render-objects@1.29.5,three-forcegraph@1.42.3';
+
         const graphData = {{
             nodes: {nodes_json},
             links: {links_json}
@@ -3474,6 +3484,23 @@ ${{JSON.stringify(window.SCAN_DATA, null, 2)}}`;
         }}
         
         console.log("✅ 3D force-directed graph loaded successfully!");
+
+        Object.assign(window, {{
+            toggleControls,
+            showScanData,
+            downloadCSV,
+            showReport,
+            downloadJSON,
+            loadPreviousJSON,
+            performSearch,
+            clearSearch,
+            navigatePrev,
+            navigateNext,
+            toggleHostTour,
+            stopHostTour,
+            toggleInfoPanel,
+            toggleLegend
+        }});
     </script>
 </body>
 </html>
